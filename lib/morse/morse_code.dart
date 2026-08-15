@@ -1,8 +1,9 @@
 /// Data-driven Morse code table.
 ///
-/// Initial coverage is A-Z and 0-9 (morse_icr_spec.md section 14).
-/// Punctuation and other sets can be added here later without touching
-/// the timing, audio, or training engines.
+/// Initial coverage is A-Z, 0-9, and a small set of common punctuation
+/// (morse_icr_spec.md sections 12 and 14). Additional characters can be
+/// added here later without touching the timing, audio, or training
+/// engines.
 const Map<String, String> morseCodeTable = {
   'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.',
   'F': '..-.', 'G': '--.', 'H': '....', 'I': '..', 'J': '.---',
@@ -12,6 +13,7 @@ const Map<String, String> morseCodeTable = {
   'Z': '--..',
   '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
   '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
+  '.': '.-.-.-', ',': '--..--', '?': '..--..', '/': '-..-.',
 };
 
 /// Returns the dit/dah pattern for [character] (case-insensitive).

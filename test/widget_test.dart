@@ -1,12 +1,13 @@
-// Milestone 1 smoke test: verifies the app shell builds and renders.
-// Replaced/extended once the real training screen exists.
+// App-level smoke test: verifies the app entry point wires up to the
+// training screen. See test/screens/training_screen_test.dart for
+// screen-level behavior.
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:morse_icr/app.dart';
 
 void main() {
-  testWidgets('MorseIcrApp builds and shows placeholder title', (
+  testWidgets('MorseIcrApp builds and shows the app title', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const MorseIcrApp());
