@@ -1,16 +1,25 @@
 import 'package:flutter/material.dart';
 
+import '../audio/morse_audio_engine.dart';
 import '../training/character_set.dart';
+import '../training/training_engine.dart';
 import 'widgets/stepped_int_control.dart';
 
-/// Milestone 4: the basic training screen shell.
+/// Milestone 5: the training screen wired to the character-generation
+/// loop.
 ///
 /// Provides character-speed control, recognition-time control,
-/// character-set selection, and a start/stop toggle. Does not yet
-/// generate characters (Milestone 5), run a recognition timer
-/// (Milestone 6), or persist settings (Milestone 12).
+/// character-set selection, and a start/stop toggle that drives
+/// [TrainingEngine]. Does not yet run a recognition timer (Milestone 6),
+/// announce answers (Milestone 7), or persist settings (Milestone 12).
 class TrainingScreen extends StatefulWidget {
-  const TrainingScreen({super.key});
+  /// [trainingEngine] lets tests substitute a fake audio player so they
+  /// don't have to exercise the real [MorseAudioEngine] platform plugin;
+  /// production code always omits it and gets the real engine.
+  const TrainingScreen({super.key, TrainingEngine? trainingEngine})
+    : _injectedTrainingEngine = trainingEngine;
+
+  final TrainingEngine? _injectedTrainingEngine;
 
   @override
   State<TrainingScreen> createState() => _TrainingScreenState();
@@ -23,10 +32,57 @@ class _TrainingScreenState extends State<TrainingScreen> {
     CharacterSetType.letters,
   };
   bool _isTraining = false;
+  int _charactersPlayed = 0;
 
-  void _toggleTraining() {
-    setState(() => _isTraining = !_isTraining);
+  MorseAudioEngine? _audioEngine;
+  late final TrainingEngine _trainingEngine;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget._injectedTrainingEngine != null) {
+      _trainingEngine = widget._injectedTrainingEngine!;
+    } else {
+      final audioEngine = MorseAudioEngine();
+      _audioEngine = audioEngine;
+      _trainingEngine = TrainingEngine(audioPlayer: audioEngine);
+    }
+    _trainingEngine.onCharacterGenerated = (_) {
+      if (mounted) setState(() => _charactersPlayed++);
+    };
   }
+
+  @override
+  void dispose() {
+    _trainingEngine.stop();
+    _audioEngine?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleTraining() async {
+    if (_isTraining) {
+      await _trainingEngine.stop();
+      if (!mounted) return;
+      setState(() => _isTraining = false);
+      return;
+    }
+
+    final characters = charactersForSelection(_selectedCharacterSets);
+    if (characters.isEmpty) return;
+
+    setState(() {
+      _isTraining = true;
+      _charactersPlayed = 0;
+    });
+    _trainingEngine.start(
+      characters: characters,
+      wpm: _wpm.toDouble(),
+      recognitionTime: Duration(milliseconds: _recognitionTimeMs),
+    );
+  }
+
+  bool get _hasSelectedCharacters =>
+      charactersForSelection(_selectedCharacterSets).isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -44,12 +100,14 @@ class _TrainingScreenState extends State<TrainingScreen> {
                   SteppedIntControl(
                     label: 'Character Speed',
                     value: _wpm,
-                    min: 40,
+                    min: 15,
                     max: 150,
                     step: 1,
                     suffix: 'WPM',
-                    enabled: !_isTraining,
-                    onChanged: (v) => setState(() => _wpm = v),
+                    onChanged: (v) {
+                      setState(() => _wpm = v);
+                      _trainingEngine.updateSettings(wpm: v.toDouble());
+                    },
                   ),
                   const SizedBox(height: 24),
                   SteppedIntControl(
@@ -59,8 +117,12 @@ class _TrainingScreenState extends State<TrainingScreen> {
                     max: 1000,
                     step: 1,
                     suffix: 'ms',
-                    enabled: !_isTraining,
-                    onChanged: (v) => setState(() => _recognitionTimeMs = v),
+                    onChanged: (v) {
+                      setState(() => _recognitionTimeMs = v);
+                      _trainingEngine.updateSettings(
+                        recognitionTime: Duration(milliseconds: v),
+                      );
+                    },
                   ),
                   const SizedBox(height: 24),
                   Text(
@@ -98,6 +160,14 @@ class _TrainingScreenState extends State<TrainingScreen> {
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
+                  if (_isTraining) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Characters played: $_charactersPlayed',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   FilledButton(
                     style: FilledButton.styleFrom(
@@ -107,7 +177,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                    onPressed: _toggleTraining,
+                    onPressed: _isTraining || _hasSelectedCharacters
+                        ? _toggleTraining
+                        : null,
                     child: Text(_isTraining ? 'Stop' : 'Start'),
                   ),
                 ],

@@ -1,9 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morse_icr/audio/morse_character_player.dart';
 import 'package:morse_icr/screens/training_screen.dart';
+import 'package:morse_icr/training/training_engine.dart';
+
+/// A no-op player so Start/Stop tests never touch the real
+/// [MorseAudioEngine] platform plugin, which has no channel mock
+/// registered under `flutter test` and hangs indefinitely if invoked.
+class _FakePlayer implements MorseCharacterPlayer {
+  @override
+  Future<void> playCharacter(String character, double wpm) async {}
+}
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
+
+  // A fresh TrainingEngine/screen backed by [_FakePlayer], for any test
+  // that starts training.
+  Widget wrapTraining() => wrap(
+    TrainingScreen(
+      trainingEngine: TrainingEngine(audioPlayer: _FakePlayer()),
+    ),
+  );
 
   testWidgets('shows default speed, recognition time, and idle status', (
     tester,
@@ -100,21 +118,102 @@ void main() {
     expect(tops.toSet(), hasLength(1));
   });
 
-  testWidgets('tapping Start toggles to Training state and disables controls', (
+  testWidgets(
+    'tapping Start toggles to Training state and disables character-set '
+    'selection',
+    (tester) async {
+      await tester.pumpWidget(wrapTraining());
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+
+      expect(find.text('Training…'), findsOneWidget);
+      expect(find.text('Stop'), findsOneWidget);
+
+      final chip = tester.widget<FilterChip>(
+        find.widgetWithText(FilterChip, 'A-Z'),
+      );
+      expect(chip.onSelected, isNull);
+
+      // Stop before the test ends so the training loop's timer doesn't
+      // outlive the test.
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'Character Speed and Recognition Time stay adjustable while training',
+    (tester) async {
+      await tester.pumpWidget(wrapTraining());
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+
+      final addButtons = find.byIcon(Icons.add_circle_outline);
+      await tester.tap(addButtons.first); // Character Speed is first
+      await tester.pump();
+      await tester.tap(addButtons.at(1)); // Recognition Time is second
+      await tester.pump();
+
+      expect(find.text('Character Speed: 91 WPM'), findsOneWidget);
+      expect(find.text('Recognition Time: 501 ms'), findsOneWidget);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+    },
+  );
+
+  testWidgets('tapping Stop returns to Idle and re-enables controls', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrapTraining());
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+
+    expect(find.text('Idle'), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
+
+    final chip = tester.widget<FilterChip>(
+      find.widgetWithText(FilterChip, 'A-Z'),
+    );
+    expect(chip.onSelected, isNotNull);
+  });
+
+  testWidgets('Start is disabled when no character set is selected', (
     tester,
   ) async {
     await tester.pumpWidget(wrap(const TrainingScreen()));
+
+    await tester.tap(find.text('A-Z')); // deselect the only active set
+    await tester.pump();
+
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Start'),
+    );
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('shows a running characters-played counter while training', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrapTraining());
+
+    expect(find.textContaining('Characters played'), findsNothing);
 
     await tester.ensureVisible(find.text('Start'));
     await tester.tap(find.text('Start'));
     await tester.pump();
 
-    expect(find.text('Training…'), findsOneWidget);
-    expect(find.text('Stop'), findsOneWidget);
+    expect(find.textContaining('Characters played:'), findsOneWidget);
 
-    final chip = tester.widget<FilterChip>(
-      find.widgetWithText(FilterChip, 'A-Z'),
-    );
-    expect(chip.onSelected, isNull);
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
   });
 }

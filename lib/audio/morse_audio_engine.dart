@@ -1,6 +1,7 @@
 import 'package:audioplayers/audioplayers.dart';
 
 import '../morse/morse_event.dart';
+import 'morse_character_player.dart';
 import 'tone_synthesizer.dart';
 
 /// Plays Morse characters as 600 Hz tone bursts.
@@ -8,7 +9,7 @@ import 'tone_synthesizer.dart';
 /// Keeps the "Morse generator" (character -> timed elements) and the
 /// "audio engine" (render + play) as separate concerns per
 /// morse_icr_spec.md section 26, so each stays independently testable.
-class MorseAudioEngine {
+class MorseAudioEngine implements MorseCharacterPlayer {
   MorseAudioEngine({
     this._synthesizer = const ToneSynthesizer(),
     AudioPlayer? player,
@@ -22,6 +23,7 @@ class MorseAudioEngine {
   /// Only covers the character's own dit/dah/gap envelope. Waiting for
   /// the recognition deadline after playback is the training engine's
   /// job (section 6), not the audio engine's.
+  @override
   Future<void> playCharacter(String character, double wpm) async {
     final elements = morseElementsForCharacter(character, wpm);
     final wavBytes = _synthesizer.synthesizeWav(elements);
