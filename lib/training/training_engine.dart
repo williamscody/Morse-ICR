@@ -3,23 +3,30 @@ import 'dart:async';
 import '../audio/morse_character_player.dart';
 import '../morse/morse_event.dart';
 import 'character_selector.dart';
+import 'recognition_timer.dart';
 
 /// Drives the character-generation training loop
 /// (morse_icr_spec.md section 26 "training engine"): while running,
-/// repeatedly selects a character from the active set, plays it, then
-/// waits out the character's audio plus the recognition time (section 6:
-/// the interval between the end of the Morse character and the computer
-/// speaking the answer) before generating the next one.
+/// repeatedly selects a character from the active set, plays it, waits
+/// out the character's audio, then starts a [RecognitionTimer] for the
+/// recognition time (section 6: the interval between the end of the
+/// Morse character and the computer speaking the answer) before
+/// generating the next one.
 ///
-/// The recognition timer only governs pacing here -- it doesn't yet
-/// gate on a learner response (Milestone 8), announce the answer
-/// (Milestone 7), or score anything (Milestone 9).
+/// The recognition timer starts only once playback has finished (section
+/// 29) and, once it expires without being cancelled, fires
+/// [onRecognitionTimeout]. Nothing cancels it yet -- that requires the
+/// learner-response hook Milestone 8 adds -- and nothing yet speaks the
+/// answer (Milestone 7) or scores it (Milestone 9); this milestone only
+/// establishes the timer itself as a distinct, independently testable
+/// component other milestones can hook into.
 class TrainingEngine {
   TrainingEngine({required this._audioPlayer, CharacterSelector? selector})
     : _selector = selector ?? CharacterSelector();
 
   final MorseCharacterPlayer _audioPlayer;
   final CharacterSelector _selector;
+  final RecognitionTimer _recognitionTimer = RecognitionTimer();
 
   bool _running = false;
   Future<void>? _loopFuture;
@@ -36,6 +43,12 @@ class TrainingEngine {
   /// displaying the character); intended for future milestones
   /// (recognition timing, logging, statistics) and for tests.
   void Function(String character)? onCharacterGenerated;
+
+  /// Called when a character's recognition deadline expires without
+  /// being cancelled first -- the "MISS" path of morse_icr_spec.md
+  /// section 29's timeline. Fires once per character, after that
+  /// character's Morse audio has finished playing.
+  void Function(String character)? onRecognitionTimeout;
 
   /// Starts generating and playing characters from [characters] at
   /// [wpm], pausing for [recognitionTime] after each one before playing
@@ -74,6 +87,7 @@ class TrainingEngine {
     _running = false;
     _timer?.cancel();
     _timer = null;
+    _recognitionTimer.cancel();
     _wakeCompleter?.complete();
     _wakeCompleter = null;
     await _loopFuture;
@@ -99,7 +113,7 @@ class TrainingEngine {
       if (!_running) break;
       await _wait(_characterDuration(character, wpm));
       if (!_running) break;
-      await _wait(_recognitionTime);
+      await _waitForRecognition(character);
     }
   }
 
@@ -107,6 +121,19 @@ class TrainingEngine {
     final completer = Completer<void>();
     _wakeCompleter = completer;
     _timer = Timer(duration, () {
+      if (!completer.isCompleted) completer.complete();
+    });
+    return completer.future;
+  }
+
+  /// Starts the recognition timer for [character] -- only once playback
+  /// has already finished, per the caller in [_runLoop] -- and resolves
+  /// once it expires, having fired [onRecognitionTimeout] first.
+  Future<void> _waitForRecognition(String character) {
+    final completer = Completer<void>();
+    _wakeCompleter = completer;
+    _recognitionTimer.start(_recognitionTime, () {
+      onRecognitionTimeout?.call(character);
       if (!completer.isCompleted) completer.complete();
     });
     return completer.future;

@@ -179,6 +179,89 @@ void main() {
     );
 
     test(
+      'onRecognitionTimeout fires once per character once its recognition '
+      'deadline expires',
+      () async {
+        final player = _RecordingPlayer();
+        final engine = TrainingEngine(audioPlayer: player);
+        final timedOut = <String>[];
+        engine.onRecognitionTimeout = timedOut.add;
+
+        engine.start(
+          characters: const ['E'],
+          wpm: 150,
+          recognitionTime: _recognitionTime,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await engine.stop();
+
+        expect(timedOut, isNotEmpty);
+        expect(timedOut, everyElement('E'));
+        // stop() can land mid-recognition-wait for the most recently
+        // played character, cancelling its timer before it expires, so
+        // timedOut may trail played by at most one.
+        expect(timedOut.length, greaterThanOrEqualTo(player.played.length - 1));
+        expect(timedOut.length, lessThanOrEqualTo(player.played.length));
+      },
+    );
+
+    test(
+      'onRecognitionTimeout only fires after that character has finished '
+      'playing (morse_icr_spec.md section 29)',
+      () async {
+        final player = _RecordingPlayer();
+        final engine = TrainingEngine(audioPlayer: player);
+        final events = <String>[];
+        engine.onCharacterGenerated = (c) => events.add('generated:$c');
+        engine.onRecognitionTimeout = (c) => events.add('timeout:$c');
+
+        engine.start(
+          characters: const ['E'],
+          wpm: 150,
+          recognitionTime: _recognitionTime,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await engine.stop();
+
+        // Each timeout must be preceded by a generation of the same
+        // character, and playback (awaited synchronously in the fake
+        // player before generation of the *next* character) always
+        // completes before the recognition timer -- and therefore its
+        // timeout -- can start.
+        expect(events.first, startsWith('generated:'));
+        for (var i = 0; i < events.length; i++) {
+          if (events[i].startsWith('timeout:')) {
+            expect(events[i - 1], 'generated:${events[i].split(':')[1]}');
+          }
+        }
+      },
+    );
+
+    test('stopping mid-recognition-wait does not fire onRecognitionTimeout '
+        'for the in-progress character', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(audioPlayer: player);
+      final timedOut = <String>[];
+      engine.onRecognitionTimeout = timedOut.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 200),
+      );
+      // Stop well within the recognition window so the pending timer is
+      // cancelled rather than left to fire.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      final countBeforeStop = timedOut.length;
+      await engine.stop();
+
+      expect(timedOut.length, countBeforeStop);
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(timedOut.length, countBeforeStop);
+    });
+
+    test(
       'a longer recognitionTime widens the gap between characters',
       () async {
         final fastPlayer = _RecordingPlayer();
