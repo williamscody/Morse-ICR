@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/audio/morse_character_player.dart';
+import 'package:morse_icr/audio/training_session_reporter.dart';
 import 'package:morse_icr/screens/training_screen.dart';
 import 'package:morse_icr/speech/answer_speaker.dart';
 import 'package:morse_icr/training/training_engine.dart';
@@ -24,15 +25,42 @@ class _FakeSpeaker implements AnswerSpeaker {
   }
 }
 
+/// Records start/stop reports and captures the remote-control
+/// callbacks so tests can verify the lock-screen/notification wiring
+/// without a real [package:audio_service] media session.
+class _FakeSessionReporter implements TrainingSessionReporter {
+  final List<String> events = [];
+  void Function()? onStopRequestedCallback;
+  void Function()? onPlayRequestedCallback;
+
+  @override
+  void reportStarted() => events.add('started');
+
+  @override
+  void reportStopped() => events.add('stopped');
+
+  @override
+  set onStopRequested(void Function()? callback) =>
+      onStopRequestedCallback = callback;
+
+  @override
+  set onPlayRequested(void Function()? callback) =>
+      onPlayRequestedCallback = callback;
+}
+
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
 
   // A fresh TrainingEngine/screen backed by [_FakePlayer], for any test
   // that starts training.
-  Widget wrapTraining({AnswerSpeaker? answerSpeaker}) => wrap(
+  Widget wrapTraining({
+    AnswerSpeaker? answerSpeaker,
+    TrainingSessionReporter? audioReporter,
+  }) => wrap(
     TrainingScreen(
       trainingEngine: TrainingEngine(audioPlayer: _FakePlayer()),
       answerSpeaker: answerSpeaker ?? _FakeSpeaker(),
+      audioReporter: audioReporter,
     ),
   );
 
@@ -198,6 +226,42 @@ void main() {
     );
     expect(chip.onSelected, isNotNull);
   });
+
+  testWidgets(
+    'reports started/stopped to the audio reporter on Start/Stop',
+    (tester) async {
+      final reporter = _FakeSessionReporter();
+      await tester.pumpWidget(wrapTraining(audioReporter: reporter));
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      expect(reporter.events, ['started']);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+      expect(reporter.events, ['started', 'stopped']);
+    },
+  );
+
+  testWidgets(
+    'a remote Stop request (lock screen/notification) stops training',
+    (tester) async {
+      final reporter = _FakeSessionReporter();
+      await tester.pumpWidget(wrapTraining(audioReporter: reporter));
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      expect(find.text('Training…'), findsOneWidget);
+
+      reporter.onStopRequestedCallback!();
+      await tester.pump();
+
+      expect(find.text('Idle'), findsOneWidget);
+      expect(reporter.events, ['started', 'stopped']);
+    },
+  );
 
   testWidgets('Start is disabled when no character set is selected', (
     tester,

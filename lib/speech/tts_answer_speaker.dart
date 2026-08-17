@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:io' show File, Platform;
 import 'dart:typed_data' show Uint8List;
 
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../audio/in_memory_audio_source.dart';
 import '../morse/morse_code.dart';
 import 'answer_speaker.dart';
 import 'spoken_character.dart';
@@ -16,7 +17,7 @@ import 'spoken_character.dart';
 ///
 /// Pre-renders every speakable character's word once (via
 /// [FlutterTts.synthesizeToFile]), reads the result into memory, and
-/// plays it back through [AudioPlayer] via [BytesSource] -- the same
+/// plays it back through [AudioPlayer] from in-memory bytes -- the same
 /// mechanism already used for Morse tone playback -- rather than
 /// calling [FlutterTts.speak] live during training or reading the
 /// cached file from disk on every call. On-device testing found
@@ -24,9 +25,9 @@ import 'spoken_character.dart';
 /// that were absent from iOS's own "Speak Selection" feature given the
 /// identical text, and separately found inconsistent (not tied to any
 /// particular character) playback delay when the cached audio was
-/// played from a [DeviceFileSource] instead of in-memory bytes --
-/// consistent with per-call disk I/O timing variance. Both are absent
-/// from Morse tone playback, which has always used in-memory bytes.
+/// played directly from disk instead of in-memory bytes -- consistent
+/// with per-call disk I/O timing variance. Both are absent from Morse
+/// tone playback, which has always used in-memory bytes.
 class TtsAnswerSpeaker implements AnswerSpeaker {
   TtsAnswerSpeaker({FlutterTts? tts, AudioPlayer? player})
     : _tts = tts ?? FlutterTts(),
@@ -68,16 +69,11 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     await _tts.awaitSynthCompletion(true);
 
     if (!kIsWeb && Platform.isIOS) {
-      // The Morse tone player (package:audioplayers) sets an exclusive
-      // AVAudioSession .playback category with no options every time it
-      // plays. Left unset here, flutter_tts's own AVSpeechSynthesizer
-      // session use can end up contending with that exclusive session
-      // each time playback alternates between the two plugins.
-      // Explicitly matching the category with mixWithOthers lets both
-      // coexist without renegotiating for exclusive ownership.
-      await _tts.setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
-        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-      ]);
+      // The AVAudioSession category (.playback, mixWithOthers) is
+      // configured once, app-wide, in main.dart -- both this plugin's
+      // AVSpeechSynthesizer and the Morse tone player
+      // (package:audioplayers) would otherwise renegotiate the session
+      // against each other on every play() call.
 
       // iOS's default "compact" voice has audible synthesis artifacts
       // that a higher-quality installed voice doesn't have. Only
@@ -172,13 +168,28 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
       return;
     }
 
+    // package:just_audio's play() future resolves once the native
+    // platform has acknowledged the play *request*, not once the clip
+    // actually finishes (confirmed on-device: it consistently resolved
+    // within a few ms of being called). TrainingEngine's
+    // onRecognitionTimeout hook needs to await actual completion
+    // (section 28/29), so this listens for processingState reaching
+    // ProcessingState.completed instead -- the just_audio equivalent of
+    // the onPlayerComplete stream this code used with audioplayers.
+    // Set up *after* setAudioSource (which moves processingState off of
+    // any stale `completed` left over from the previous character) and
+    // *before* play(), so no transition can be missed.
+    await _player.setAudioSource(InMemoryAudioSource(cachedAudio));
+
     final completer = Completer<void>();
-    late final StreamSubscription<void> subscription;
-    subscription = _player.onPlayerComplete.listen((_) {
-      subscription.cancel();
-      if (!completer.isCompleted) completer.complete();
+    late final StreamSubscription<ProcessingState> subscription;
+    subscription = _player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        subscription.cancel();
+        if (!completer.isCompleted) completer.complete();
+      }
     });
-    await _player.play(BytesSource(cachedAudio, mimeType: 'audio/wav'));
+    await _player.play();
     await completer.future;
   }
 }

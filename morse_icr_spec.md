@@ -1084,4 +1084,19 @@ Settings -> Accessibility -> Text-to-speech output (exact path varies by manufac
 
 Section 35's future Settings screen may eventually let the learner pick a specific voice explicitly. Until then, this automatic quality-ranking behavior is the only mechanism, and it already runs on every launch without any user-facing setting.
 
+---
+
+# 37. Lock Screen / Background Media Session
+
+Registers the running training session with the OS media session (`package:audio_service`) so a "Morse Training" card appears on the lock screen, in Control Center, and in the iOS Dynamic Island while a session is active, with a Stop control; Android gets the equivalent foreground-service notification.
+
+This is a thin OS-integration layer alongside the section 26 Audio Architecture components, not a replacement for any of them: `TrainingEngine` still owns the character-generation loop and drives the Morse generator, audio engine, and speech engine directly, exactly as section 26 specifies. The media-session layer only mirrors `TrainingEngine.isRunning` into a single session-level `MediaItem` and forwards remote Play/Stop taps back to the training screen -- it never plays audio itself and has no per-character knowledge, since the underlying playback is a rapid stream of short tone/speech bursts rather than one continuous track.
+
+Per section 32's dependency-justification requirement:
+
+1. **Why needed**: without it, an already-running background session (section 3/25) has no lock-screen/Control Center/notification presence, and Android has no foreground service at all -- background playback can be killed by the OS once the app is backgrounded there.
+2. **Platforms**: `audio_service` supports iOS, Android, macOS, web, and others; both required platforms (section 3) are covered.
+3. **iOS/Android compatibility**: confirmed against iOS 13+ deployment target and current Android `minSdk`/`targetSdk` from the Flutter Gradle config already in use.
+4. **Native dependencies added**: pulls in `package:audio_session` (used to configure the shared `AVAudioSession` once, app-wide, replacing the ad hoc per-plugin category calls this project previously made); on Android, requires an `AudioService` foreground-service declaration and a `MediaButtonReceiver` in `AndroidManifest.xml`, plus `MainActivity` extending `AudioServiceActivity` instead of `FlutterActivity`. No CocoaPods/SPM changes beyond what `flutter pub get` already manages.
+
 # End of Specification

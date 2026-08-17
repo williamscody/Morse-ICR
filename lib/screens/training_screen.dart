@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../audio/morse_audio_engine.dart';
+import '../audio/training_session_reporter.dart';
 import '../speech/answer_speaker.dart';
 import '../speech/tts_answer_speaker.dart';
 import '../training/character_set.dart';
@@ -20,16 +21,20 @@ class TrainingScreen extends StatefulWidget {
   /// [trainingEngine] and [answerSpeaker] let tests substitute fakes so
   /// they don't have to exercise the real [MorseAudioEngine] platform
   /// plugin or real text-to-speech; production code always omits them
-  /// and gets the real implementations.
+  /// and gets the real implementations. [audioReporter] is left null in
+  /// tests -- there's nothing to mirror state into without a real OS
+  /// media session, so every call against it is null-checked.
   const TrainingScreen({
     super.key,
     TrainingEngine? trainingEngine,
     AnswerSpeaker? answerSpeaker,
+    this.audioReporter,
   }) : _injectedTrainingEngine = trainingEngine,
        _injectedAnswerSpeaker = answerSpeaker;
 
   final TrainingEngine? _injectedTrainingEngine;
   final AnswerSpeaker? _injectedAnswerSpeaker;
+  final TrainingSessionReporter? audioReporter;
 
   @override
   State<TrainingScreen> createState() => _TrainingScreenState();
@@ -84,12 +89,20 @@ class _TrainingScreenState extends State<TrainingScreen> {
       if (!_voiceEnabled) return Future<void>.value();
       return _answerSpeaker.speak(character);
     };
+    // Lets the learner stop (or resume, using whatever settings are
+    // currently selected) from the lock screen/Control Center/Dynamic
+    // Island/Android notification, not just the in-app button --
+    // _toggleTraining already branches on _isTraining, so either
+    // remote control routes to the right path.
+    widget.audioReporter?.onStopRequested = _toggleTraining;
+    widget.audioReporter?.onPlayRequested = _toggleTraining;
   }
 
   @override
   void dispose() {
     _trainingEngine.stop();
     _audioEngine?.dispose();
+    widget.audioReporter?.reportStopped();
     super.dispose();
   }
 
@@ -97,6 +110,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     if (_isTraining) {
       await _trainingEngine.stop();
       if (!mounted) return;
+      widget.audioReporter?.reportStopped();
       setState(() => _isTraining = false);
       return;
     }
@@ -108,6 +122,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
       _isTraining = true;
       _charactersPlayed = 0;
     });
+    widget.audioReporter?.reportStarted();
     _trainingEngine.start(
       characters: characters,
       wpm: _wpm.toDouble(),
