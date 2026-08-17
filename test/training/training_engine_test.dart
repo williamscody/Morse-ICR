@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/audio/morse_character_player.dart';
 import 'package:morse_icr/training/training_engine.dart';
@@ -185,7 +187,7 @@ void main() {
         final player = _RecordingPlayer();
         final engine = TrainingEngine(audioPlayer: player);
         final timedOut = <String>[];
-        engine.onRecognitionTimeout = timedOut.add;
+        engine.onRecognitionTimeout = (c) async => timedOut.add(c);
 
         engine.start(
           characters: const ['E'],
@@ -213,7 +215,7 @@ void main() {
         final engine = TrainingEngine(audioPlayer: player);
         final events = <String>[];
         engine.onCharacterGenerated = (c) => events.add('generated:$c');
-        engine.onRecognitionTimeout = (c) => events.add('timeout:$c');
+        engine.onRecognitionTimeout = (c) async => events.add('timeout:$c');
 
         engine.start(
           characters: const ['E'],
@@ -242,7 +244,7 @@ void main() {
       final player = _RecordingPlayer();
       final engine = TrainingEngine(audioPlayer: player);
       final timedOut = <String>[];
-      engine.onRecognitionTimeout = timedOut.add;
+      engine.onRecognitionTimeout = (c) async => timedOut.add(c);
 
       engine.start(
         characters: const ['E'],
@@ -260,6 +262,34 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(timedOut.length, countBeforeStop);
     });
+
+    test(
+      'the next character does not start until onRecognitionTimeout\'s '
+      'future completes',
+      () async {
+        final player = _RecordingPlayer();
+        final engine = TrainingEngine(audioPlayer: player);
+        final releaseHook = Completer<void>();
+        engine.onRecognitionTimeout = (_) => releaseHook.future;
+
+        engine.start(
+          characters: const ['E'],
+          wpm: 150,
+          recognitionTime: _recognitionTime,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // Only the first character should have played -- the hook for
+        // it is still pending, so the loop must be blocked before the
+        // second character.
+        expect(player.played.length, 1);
+
+        releaseHook.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(player.played.length, greaterThan(1));
+
+        await engine.stop();
+      },
+    );
 
     test(
       'a longer recognitionTime widens the gap between characters',

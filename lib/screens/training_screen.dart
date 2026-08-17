@@ -1,25 +1,35 @@
 import 'package:flutter/material.dart';
 
 import '../audio/morse_audio_engine.dart';
+import '../speech/answer_speaker.dart';
+import '../speech/tts_answer_speaker.dart';
 import '../training/character_set.dart';
 import '../training/training_engine.dart';
 import 'widgets/stepped_int_control.dart';
 
-/// Milestone 5: the training screen wired to the character-generation
-/// loop.
+/// Milestone 7: the training screen wired to the character-generation
+/// loop, recognition timer, and computer-voice answer.
 ///
 /// Provides character-speed control, recognition-time control,
 /// character-set selection, and a start/stop toggle that drives
-/// [TrainingEngine]. Does not yet run a recognition timer (Milestone 6),
-/// announce answers (Milestone 7), or persist settings (Milestone 12).
+/// [TrainingEngine], which announces each character via [AnswerSpeaker]
+/// once its recognition deadline lapses. Nothing yet gates that
+/// announcement on a learner response (Milestone 8) or scores it
+/// (Milestone 9); persistence is still Milestone 12.
 class TrainingScreen extends StatefulWidget {
-  /// [trainingEngine] lets tests substitute a fake audio player so they
-  /// don't have to exercise the real [MorseAudioEngine] platform plugin;
-  /// production code always omits it and gets the real engine.
-  const TrainingScreen({super.key, TrainingEngine? trainingEngine})
-    : _injectedTrainingEngine = trainingEngine;
+  /// [trainingEngine] and [answerSpeaker] let tests substitute fakes so
+  /// they don't have to exercise the real [MorseAudioEngine] platform
+  /// plugin or real text-to-speech; production code always omits them
+  /// and gets the real implementations.
+  const TrainingScreen({
+    super.key,
+    TrainingEngine? trainingEngine,
+    AnswerSpeaker? answerSpeaker,
+  }) : _injectedTrainingEngine = trainingEngine,
+       _injectedAnswerSpeaker = answerSpeaker;
 
   final TrainingEngine? _injectedTrainingEngine;
+  final AnswerSpeaker? _injectedAnswerSpeaker;
 
   @override
   State<TrainingScreen> createState() => _TrainingScreenState();
@@ -33,9 +43,12 @@ class _TrainingScreenState extends State<TrainingScreen> {
   };
   bool _isTraining = false;
   int _charactersPlayed = 0;
+  bool _voiceEnabled = true;
+  bool _voicePreparing = false;
 
   MorseAudioEngine? _audioEngine;
   late final TrainingEngine _trainingEngine;
+  late final AnswerSpeaker _answerSpeaker;
 
   @override
   void initState() {
@@ -47,8 +60,29 @@ class _TrainingScreenState extends State<TrainingScreen> {
       _audioEngine = audioEngine;
       _trainingEngine = TrainingEngine(audioPlayer: audioEngine);
     }
+    _answerSpeaker = widget._injectedAnswerSpeaker ?? TtsAnswerSpeaker();
+    final answerSpeaker = _answerSpeaker;
+    if (answerSpeaker is TtsAnswerSpeaker) {
+      // Pre-rendering every character's spoken word (section 36) takes
+      // a moment, most noticeably right after the learner installs a
+      // higher-quality voice -- surface that instead of leaving early
+      // announcements silently slow or missing.
+      _voicePreparing = true;
+      answerSpeaker.ready.whenComplete(() {
+        if (mounted) setState(() => _voicePreparing = false);
+      });
+    }
     _trainingEngine.onCharacterGenerated = (_) {
       if (mounted) setState(() => _charactersPlayed++);
+    };
+    // The Voice switch is the sole authority on whether the computer
+    // speaks -- checked at the moment the deadline expires, not when
+    // training started, so toggling it mid-session takes effect
+    // immediately. Voice recognition/scoring is not a factor here and
+    // is out of scope until Milestone 8/9.
+    _trainingEngine.onRecognitionTimeout = (character) {
+      if (!_voiceEnabled) return Future<void>.value();
+      return _answerSpeaker.speak(character);
     };
   }
 
@@ -124,6 +158,39 @@ class _TrainingScreenState extends State<TrainingScreen> {
                       );
                     },
                   ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Voice',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Switch(
+                        value: _voiceEnabled,
+                        onChanged: (value) =>
+                            setState(() => _voiceEnabled = value),
+                      ),
+                    ],
+                  ),
+                  if (_voicePreparing) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Preparing voice…',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   Text(
                     'Character Set',

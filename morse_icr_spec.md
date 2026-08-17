@@ -652,7 +652,11 @@ At minimum, persist:
 - Session A duration
 - Session B duration
 - Session C duration
-- Sidetone frequency
+- Sidetone frequency (pitch)
+- Morse volume
+- Voice volume
+- Speak "." as: Period or Dot
+- Speak "/" as: Slash or Stroke
 
 ### Training session records
 
@@ -957,6 +961,10 @@ Personal character-speed discovery.
 
 Problem-character training.
 
+### Milestone 15
+
+Settings screen (section 35): Speak "." as Period/Dot, Speak "/" as Slash/Stroke, Morse pitch, Morse volume, Voice volume -- all persisted per section 23.
+
 Do not implement everything at once.
 
 Each milestone should produce a runnable/testable application.
@@ -1017,5 +1025,63 @@ First:
 Do not make broad architectural changes without explaining them first.
 
 The human product owner will make product decisions; the AI coding agent should handle implementation details.
+
+---
+
+# 35. Settings Screen
+
+A dedicated Settings screen should let the learner adjust preferences that don't belong on the main training screen (section 24 keeps that screen minimal) but still affect the training experience.
+
+## Speak "." as: Period or Dot
+
+The learner should be able to choose whether the punctuation character "." (section 14) is announced as:
+
+- "Period"
+- "Dot"
+
+## Speak "/" as: Slash or Stroke
+
+The learner should be able to choose whether the punctuation character "/" is announced as:
+
+- "Slash"
+- "Stroke"
+
+## Morse: Pitch
+
+Adjusts the CW sidetone frequency (section 4), which section 4 already requires to be internally configurable in anticipation of this preference.
+
+## Morse: Volume
+
+Adjusts the playback volume of the Morse tone, independent of Voice volume.
+
+## Voice: Volume
+
+Adjusts the playback volume of the computer's spoken answer (section 28), independent of Morse volume.
+
+## Persistence
+
+All Settings screen preferences must be persisted across app launches, joining the persisted configuration described in section 23.
+
+---
+
+# 36. Voice Quality Selection
+
+The application automatically selects the highest-quality installed English voice for the computer's spoken answer (section 28), ranking Premium > Enhanced > (plain) Default. This ranking always wins over whichever voice the operating system has marked as its own default for that language -- the OS default is used only as a fallback when no Enhanced/Premium voice is installed at all.
+
+This matters because both iOS and Android ship a low-quality "compact"/basic voice out of the box; Enhanced and Premium voices are optional downloads the learner must install manually to get noticeably clearer, more natural speech. The application cannot download a voice on the learner's behalf -- only detect and prefer one that's already installed.
+
+## How to install a higher-quality voice
+
+### iPhone / iPad
+
+Settings -> Accessibility -> Spoken Content -> Voices -> English -> choose a voice (e.g. Samantha, Ava) -> select an Enhanced or Premium quality option to download it. The application picks it up automatically the next time it launches; no in-app action is required.
+
+### Android phone / tablet
+
+Settings -> Accessibility -> Text-to-speech output (exact path varies by manufacturer and Android version) -> select the active TTS engine (commonly Google Text-to-Speech) -> Install voice data, then choose a higher-quality voice for the desired language. The application picks it up automatically the next time it launches.
+
+## Relationship to the Settings screen (section 35)
+
+Section 35's future Settings screen may eventually let the learner pick a specific voice explicitly. Until then, this automatic quality-ranking behavior is the only mechanism, and it already runs on every launch without any user-facing setting.
 
 # End of Specification

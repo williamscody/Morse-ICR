@@ -14,12 +14,12 @@ import 'recognition_timer.dart';
 /// generating the next one.
 ///
 /// The recognition timer starts only once playback has finished (section
-/// 29) and, once it expires without being cancelled, fires
-/// [onRecognitionTimeout]. Nothing cancels it yet -- that requires the
-/// learner-response hook Milestone 8 adds -- and nothing yet speaks the
-/// answer (Milestone 7) or scores it (Milestone 9); this milestone only
-/// establishes the timer itself as a distinct, independently testable
-/// component other milestones can hook into.
+/// 29) and, once it expires without being cancelled, awaits
+/// [onRecognitionTimeout] before moving on -- so if the hook speaks the
+/// answer (section 28), the next character doesn't begin until that
+/// finishes. Nothing cancels the timer yet -- that requires the
+/// learner-response hook Milestone 8 adds -- and nothing yet scores a
+/// response (Milestone 9).
 class TrainingEngine {
   TrainingEngine({required this._audioPlayer, CharacterSelector? selector})
     : _selector = selector ?? CharacterSelector();
@@ -47,8 +47,11 @@ class TrainingEngine {
   /// Called when a character's recognition deadline expires without
   /// being cancelled first -- the "MISS" path of morse_icr_spec.md
   /// section 29's timeline. Fires once per character, after that
-  /// character's Morse audio has finished playing.
-  void Function(String character)? onRecognitionTimeout;
+  /// character's Morse audio has finished playing. The training loop
+  /// awaits the returned future -- e.g. for the computer's spoken
+  /// answer to finish (section 28) -- before generating the next
+  /// character.
+  Future<void> Function(String character)? onRecognitionTimeout;
 
   /// Starts generating and playing characters from [characters] at
   /// [wpm], pausing for [recognitionTime] after each one before playing
@@ -88,7 +91,14 @@ class TrainingEngine {
     _timer?.cancel();
     _timer = null;
     _recognitionTimer.cancel();
-    _wakeCompleter?.complete();
+    // _wakeCompleter can already be completed here -- its owner (_wait
+    // or _waitForRecognition) may have just resolved it naturally in
+    // the same event-loop turn, before _runLoop's awaited continuation
+    // got a chance to move _wakeCompleter on to the next one.
+    final wakeCompleter = _wakeCompleter;
+    if (wakeCompleter != null && !wakeCompleter.isCompleted) {
+      wakeCompleter.complete();
+    }
     _wakeCompleter = null;
     await _loopFuture;
     _loopFuture = null;
@@ -128,12 +138,20 @@ class TrainingEngine {
 
   /// Starts the recognition timer for [character] -- only once playback
   /// has already finished, per the caller in [_runLoop] -- and resolves
-  /// once it expires, having fired [onRecognitionTimeout] first.
+  /// once it expires and [onRecognitionTimeout] (if any) has finished.
   Future<void> _waitForRecognition(String character) {
     final completer = Completer<void>();
     _wakeCompleter = completer;
-    _recognitionTimer.start(_recognitionTime, () {
-      onRecognitionTimeout?.call(character);
+    _recognitionTimer.start(_recognitionTime, () async {
+      final hook = onRecognitionTimeout;
+      if (hook != null) {
+        try {
+          await hook(character);
+        } catch (_) {
+          // A misbehaving hook (e.g. speech synthesis failure)
+          // shouldn't kill the training loop.
+        }
+      }
       if (!completer.isCompleted) completer.complete();
     });
     return completer.future;
