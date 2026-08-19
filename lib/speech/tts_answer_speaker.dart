@@ -39,7 +39,7 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   }
 
   final FlutterTts _tts;
-  final AudioPlayer _player;
+  AudioPlayer _player;
   late final Future<void> _ready;
   final Map<String, Uint8List> _cachedAudio = {};
   String _voiceIdentifier = 'default';
@@ -191,5 +191,17 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     });
     await _player.play();
     await completer.future;
+  }
+
+  /// Recreates the underlying [AudioPlayer], discarding the old one.
+  ///
+  /// See [MorseAudioEngine.resetPlayer] -- the same underlying
+  /// [InMemoryAudioSource]/just_audio local-proxy-server staleness
+  /// applies here too, since this class plays cached TTS audio through
+  /// the identical mechanism. Call this on app resume.
+  Future<void> resetPlayer() async {
+    final old = _player;
+    _player = AudioPlayer();
+    await old.dispose();
   }
 }

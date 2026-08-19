@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Morse ICR listens for you to say each character aloud so it can tell whether you beat the computer to the answer.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Morse ICR uses speech recognition to check whether you said the correct character before the computer announces it.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

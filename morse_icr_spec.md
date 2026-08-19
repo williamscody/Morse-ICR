@@ -965,6 +965,10 @@ Problem-character training.
 
 Settings screen (section 35): Speak "." as Period/Dot, Speak "/" as Slash/Stroke, Morse pitch, Morse volume, Voice volume -- all persisted per section 23.
 
+### Milestone 16
+
+On-device, enrollment-based speech recognition (section 38), as a candidate replacement for the general-purpose speech-recognition engine established in Milestone 8.
+
 Do not implement everything at once.
 
 Each milestone should produce a runnable/testable application.
@@ -1086,7 +1090,11 @@ Section 35's future Settings screen may eventually let the learner pick a specif
 
 ---
 
-# 37. Lock Screen / Background Media Session
+# 37. Lock Screen / Background Media Session (implemented, then reverted)
+
+**2026-08-18: reverted.** This section originally specified a lock-screen/Control Center/Dynamic Island "Now Playing" card via `package:audio_service`, and it was implemented and shipped. It was removed at Bill's explicit direction -- the lock-screen card wasn't actually needed for the app's real use case (training with wireless headphones, phone in a pocket, screen locked), and `TrainingAudioHandler`'s `.playback` media-session management was found to be fighting `speech_to_text`'s own `.playAndRecord` AVAudioSession category churn (section 27), contributing to several hard-to-diagnose audio bugs during Milestone 8 debugging. Background execution itself (section 3/25 -- training keeps running with the screen locked) is still required and was **not** meant to be given up, but the two platforms aren't symmetric here: on iOS, background playback only ever needed `UIBackgroundModes: audio` declared, not `audio_service`, so it's unaffected by this revert. On Android, `audio_service` was the only thing providing the foreground service (and its permissions/manifest entries) that background execution there actually depends on -- removing it means Android training will **not** survive backgrounding until a foreground service is reintroduced some other way. Given Android hasn't been verified/tested at all yet (a separate open task), this gap is deliberately left unaddressed for now rather than silently masked. The original spec text is preserved below for context; do not re-add `audio_service` without re-evaluating the AVAudioSession conflict it caused.
+
+---
 
 Registers the running training session with the OS media session (`package:audio_service`) so a "Morse Training" card appears on the lock screen, in Control Center, and in the iOS Dynamic Island while a session is active, with a Stop control; Android gets the equivalent foreground-service notification.
 
@@ -1098,5 +1106,33 @@ Per section 32's dependency-justification requirement:
 2. **Platforms**: `audio_service` supports iOS, Android, macOS, web, and others; both required platforms (section 3) are covered.
 3. **iOS/Android compatibility**: confirmed against iOS 13+ deployment target and current Android `minSdk`/`targetSdk` from the Flutter Gradle config already in use.
 4. **Native dependencies added**: pulls in `package:audio_session` (used to configure the shared `AVAudioSession` once, app-wide, replacing the ad hoc per-plugin category calls this project previously made); on Android, requires an `AudioService` foreground-service declaration and a `MediaButtonReceiver` in `AndroidManifest.xml`, plus `MainActivity` extending `AudioServiceActivity` instead of `FlutterActivity`. No CocoaPods/SPM changes beyond what `flutter pub get` already manages.
+
+---
+
+# 38. On-Device, Enrollment-Based Speech Recognition
+
+Milestone 8's speech recognition (section 27) uses a general-purpose, open-vocabulary engine (`package:speech_to_text`). That engine's job -- transcribing arbitrary spoken language -- is much harder than what this application actually needs, and on-device testing surfaced real costs from that mismatch: 700ms-1.5s recognition latency, and no usable per-result confidence signal (on-device recognition reports 0 confidence rather than a real score).
+
+This application only ever needs to recognize one spoken character at a time, from a small, fixed, already-enumerated vocabulary: the letters and digits (section 15), plus the punctuation characters and their spoken-name variants (sections 14, 35). That is a **closed-set isolated-word classification** problem, not open-vocabulary transcription -- the same category as wake-word detection or old touch-tone-replacement digit recognizers, and a substantially lighter computational load than general ASR.
+
+## Enrollment
+
+Rather than a general acoustic model meant to generalize across every speaker, this recognizer is trained on exactly one speaker: the learner using the app. A one-time, guided enrollment session prompts the learner to speak each character in the active vocabulary (A-Z, 0-9, and the punctuation set) aloud, once each, and records the resulting short audio clip as that character's reference "training element."
+
+This sidesteps the hardest part of building a custom recognizer -- collecting enough labeled training data to generalize across accents, dialects, and recording conditions -- by not generalizing at all. The recognizer only ever needs to match the one voice and dialect it was enrolled against.
+
+Re-enrollment (redoing some or all characters) should be supported, since a single bad take, a changed microphone/headphone setup, or a learner wanting to improve accuracy are all plausible.
+
+## Recognition
+
+At recognition time, a newly heard short utterance is compared against the enrolled training elements for the active character set, and matched to whichever element it's closest to, if any element is close enough. The comparison should be cheap enough to run well within the recognition-timing budget established in sections 6 and 29 -- a small fraction of the 700ms-1.5s this application currently pays for general transcription.
+
+The specific matching technique (e.g. dynamic time warping over MFCC/mel-spectrogram features, versus a small trained classifier) needs investigation and testing, the same way section 27 already flags for the general-purpose engine. A pure-Dart template-matching approach is worth trying first, per section 32's preference for avoiding unnecessary dependencies -- it would need no TFLite/Core ML/native ML dependency at all. Whether that reaches usable accuracy, or a small on-device model is needed instead, is an open question for implementation to answer.
+
+## Relationship to Milestone 8
+
+This does not replace [`ResponseListener`](section 27's architecture requirement that the speech-recognition implementation be swappable) -- it's a second implementation behind the same interface, so it can be developed, tested, and compared against the existing general-purpose engine without disturbing `TrainingEngine` or the rest of the training loop. Whether it fully replaces Milestone 8's engine, or becomes a selectable alternative, is a product decision for after it's built and measured.
+
+This does **not** address the unrelated acoustic self-echo problem (section 27/37: the phone's own microphone re-hearing its own spoken answer through open air) -- that is a property of simultaneous playback and recording on a phone speaker, independent of which recognizer is listening. The headphone requirement established for Milestone 8 remains necessary regardless of which recognition engine is in use.
 
 # End of Specification

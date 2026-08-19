@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../audio/morse_character_player.dart';
+import '../debug_log.dart';
 import '../morse/morse_event.dart';
 import 'character_selector.dart';
 import 'recognition_timer.dart';
@@ -14,11 +15,11 @@ import 'recognition_timer.dart';
 /// generating the next one.
 ///
 /// The recognition timer starts only once playback has finished (section
-/// 29) and, once it expires without being cancelled, awaits
-/// [onRecognitionTimeout] before moving on -- so if the hook speaks the
-/// answer (section 28), the next character doesn't begin until that
-/// finishes. Nothing cancels the timer yet -- that requires the
-/// learner-response hook Milestone 8 adds -- and nothing yet scores a
+/// 29) and, once it expires, awaits [onRecognitionTimeout] before moving
+/// on -- so if the hook speaks the answer (section 28), the next
+/// character doesn't begin until that finishes; [submitResponse] does
+/// not cancel or delay this (Milestone 8's product-scope clarification:
+/// the computer always announces the answer). Nothing yet scores a
 /// response (Milestone 9).
 class TrainingEngine {
   TrainingEngine({required this._audioPlayer, CharacterSelector? selector})
@@ -34,6 +35,8 @@ class TrainingEngine {
   Timer? _timer;
   double _wpm = 0;
   Duration _recognitionTime = Duration.zero;
+  String? _awaitingResponseFor;
+  String? _respondedTo;
 
   bool get isRunning => _running;
 
@@ -52,6 +55,46 @@ class TrainingEngine {
   /// answer to finish (section 28) -- before generating the next
   /// character.
   Future<void> Function(String character)? onRecognitionTimeout;
+
+  /// Called (at most once per character) when [submitResponse]
+  /// recognizes the correct character -- the "SUCCESS" path of
+  /// morse_icr_spec.md section 29's timeline, parallel to
+  /// [onRecognitionTimeout]'s "MISS" path.
+  ///
+  /// Deliberately does *not* currently suppress [onRecognitionTimeout]
+  /// -- the computer still announces the answer regardless, since
+  /// speech-recognition accuracy is still being verified and Bill
+  /// wants the voice kept on for debugging until a future settings
+  /// toggle exists for it. Scoring/statistics (Milestone 9) and
+  /// problem-character capture (Milestone 14) aren't wired up yet
+  /// either; this only exists so later work can hook in without
+  /// further changes here.
+  void Function(String character)? onCorrectResponse;
+
+  /// Call when the learner is recognized as having said a character
+  /// aloud (morse_icr_spec.md section 27). Only credited while
+  /// [character]'s own recognition deadline is still running -- this is
+  /// "beat the computer" (section 7): a response that arrives after the
+  /// deadline has already lost, even if it's otherwise correct, so it
+  /// must not light the green dot. (An earlier version credited a
+  /// response any time up until the next character superseded it, to
+  /// tolerate ASR's 700ms-1.5s result lag -- on-device testing showed
+  /// that made the dot meaningless as a "did I beat the computer"
+  /// signal, since most credited responses were actually late.) No-ops
+  /// for a mismatched, stale (already-superseded), repeat, or
+  /// deadline-expired response.
+  void submitResponse(String character) {
+    logDebug(
+      'submitResponse($character) awaiting=$_awaitingResponseFor '
+      'respondedTo=$_respondedTo running=${_recognitionTimer.isRunning}',
+    );
+    if (character != _awaitingResponseFor || character == _respondedTo) {
+      return;
+    }
+    if (!_recognitionTimer.isRunning) return;
+    _respondedTo = character;
+    onCorrectResponse?.call(character);
+  }
 
   /// Starts generating and playing characters from [characters] at
   /// [wpm], pausing for [recognitionTime] after each one before playing
@@ -91,6 +134,8 @@ class TrainingEngine {
     _timer?.cancel();
     _timer = null;
     _recognitionTimer.cancel();
+    _awaitingResponseFor = null;
+    _respondedTo = null;
     // _wakeCompleter can already be completed here -- its owner (_wait
     // or _waitForRecognition) may have just resolved it naturally in
     // the same event-loop turn, before _runLoop's awaited continuation
@@ -112,13 +157,18 @@ class TrainingEngine {
       // either finishes -- only the *next* character should speed up
       // or slow down.
       final wpm = _wpm;
+      logDebug('generated: $character');
       onCharacterGenerated?.call(character);
       try {
         await _audioPlayer.playCharacter(character, wpm);
-      } catch (_) {
+      } catch (e) {
         // A playback failure shouldn't kill the training loop -- audio
         // output is an external boundary (device/plugin issues) the
-        // learner can't control mid-session.
+        // learner can't control mid-session. Logged rather than
+        // silently swallowed -- this exact catch was hiding whatever
+        // native error explains the "no audio after background+lock"
+        // bug from every earlier debugging attempt this session.
+        logDebug('playCharacter($character) failed: $e');
       }
       if (!_running) break;
       await _wait(_characterDuration(character, wpm));
@@ -142,6 +192,8 @@ class TrainingEngine {
   Future<void> _waitForRecognition(String character) {
     final completer = Completer<void>();
     _wakeCompleter = completer;
+    _awaitingResponseFor = character;
+    _respondedTo = null;
     _recognitionTimer.start(_recognitionTime, () async {
       final hook = onRecognitionTimeout;
       if (hook != null) {

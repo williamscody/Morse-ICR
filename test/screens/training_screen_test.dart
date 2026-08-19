@@ -1,10 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/audio/morse_character_player.dart';
-import 'package:morse_icr/audio/training_session_reporter.dart';
+import 'package:morse_icr/screens/settings_screen.dart';
 import 'package:morse_icr/screens/training_screen.dart';
 import 'package:morse_icr/speech/answer_speaker.dart';
+import 'package:morse_icr/speech/response_listener.dart';
 import 'package:morse_icr/training/training_engine.dart';
+
+/// Locates the [SettingsScreen] pushed by tapping the app bar's
+/// settings icon. Flutter's default byType finder skips "offstage"
+/// widgets, and a just-pushed [MaterialPageRoute]'s content stays
+/// flagged offstage well past its own transition finishing -- an SDK
+/// quirk in this Flutter version, not anything about this app -- so
+/// this needs skipOffstage disabled. Callers drive the screen by
+/// invoking its callbacks directly and popping via [Navigator] rather
+/// than tapping through it, since taps on that same offstage-flagged
+/// content don't hit-test correctly either.
+Finder _pushedSettingsScreen() =>
+    find.byType(SettingsScreen, skipOffstage: false);
 
 /// A no-op player so Start/Stop tests never touch the real
 /// [MorseAudioEngine] platform plugin, which has no channel mock
@@ -25,27 +40,35 @@ class _FakeSpeaker implements AnswerSpeaker {
   }
 }
 
-/// Records start/stop reports and captures the remote-control
-/// callbacks so tests can verify the lock-screen/notification wiring
-/// without a real [package:audio_service] media session.
-class _FakeSessionReporter implements TrainingSessionReporter {
-  final List<String> events = [];
-  void Function()? onStopRequestedCallback;
-  void Function()? onPlayRequestedCallback;
+/// A no-op listener so Start/Stop tests never touch the real
+/// [SpeechToTextResponseListener] platform plugin, which -- like
+/// [_FakePlayer]'s real counterpart -- has no channel mock registered
+/// under `flutter test` and hangs indefinitely if invoked. Also records
+/// the callback so tests can simulate a recognized response.
+class _FakeResponseListener implements ResponseListener {
+  final List<String> startListeningCalls = [];
+  final List<String> restartCalls = [];
+  final List<String> stopListeningCalls = [];
+  void Function(String character)? onRecognized;
 
   @override
-  void reportStarted() => events.add('started');
+  Future<void> startListening(
+    void Function(String character) onRecognized,
+  ) async {
+    this.onRecognized = onRecognized;
+    startListeningCalls.add('start');
+  }
 
   @override
-  void reportStopped() => events.add('stopped');
+  Future<void> restart() async {
+    restartCalls.add('restart');
+  }
 
   @override
-  set onStopRequested(void Function()? callback) =>
-      onStopRequestedCallback = callback;
-
-  @override
-  set onPlayRequested(void Function()? callback) =>
-      onPlayRequestedCallback = callback;
+  Future<void> stopListening() async {
+    onRecognized = null;
+    stopListeningCalls.add('stop');
+  }
 }
 
 void main() {
@@ -55,19 +78,33 @@ void main() {
   // that starts training.
   Widget wrapTraining({
     AnswerSpeaker? answerSpeaker,
-    TrainingSessionReporter? audioReporter,
+    ResponseListener? responseListener,
   }) => wrap(
     TrainingScreen(
       trainingEngine: TrainingEngine(audioPlayer: _FakePlayer()),
       answerSpeaker: answerSpeaker ?? _FakeSpeaker(),
-      audioReporter: audioReporter,
+      responseListener: responseListener ?? _FakeResponseListener(),
+      headphonesConnectedCheck: () async => true,
+      reconfigureAudioSessionOnStart: () async {},
+      activateAudioSessionOnStart: () async {},
+      deactivateAudioSessionOnStop: () async {},
     ),
   );
 
   testWidgets('shows default speed, recognition time, and idle status', (
     tester,
   ) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     expect(find.text('Character Speed: 90 WPM'), findsOneWidget);
     expect(find.text('Recognition Time: 500 ms'), findsOneWidget);
@@ -83,7 +120,17 @@ void main() {
   testWidgets('tapping + next to WPM slider increases speed by 1', (
     tester,
   ) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     final addButtons = find.byIcon(Icons.add_circle_outline);
     await tester.tap(addButtons.first); // WPM control is first on screen
@@ -95,7 +142,17 @@ void main() {
   testWidgets('typing a WPM value and submitting updates the speed', (
     tester,
   ) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     final wpmField = find.byType(TextField).first;
     await tester.tap(wpmField);
@@ -109,7 +166,17 @@ void main() {
   });
 
   testWidgets('typing a WPM value above max clamps to max', (tester) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     final wpmField = find.byType(TextField).first;
     await tester.tap(wpmField);
@@ -123,7 +190,17 @@ void main() {
   });
 
   testWidgets('character set chips are multi-selectable', (tester) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     await tester.tap(find.text('0-9'));
     await tester.pump();
@@ -139,7 +216,17 @@ void main() {
   });
 
   testWidgets('character set chips do not show a checkmark', (tester) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     final chip = tester.widget<FilterChip>(
       find.widgetWithText(FilterChip, 'A-Z'),
@@ -148,7 +235,17 @@ void main() {
   });
 
   testWidgets('all four character set chips fit on one line', (tester) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     final labels = ['A-Z', '0-9', 'Pun', 'Word'];
     final tops = <double>[];
@@ -185,6 +282,53 @@ void main() {
   );
 
   testWidgets(
+    'a second tap landing while Start is still completing its async setup '
+    'is ignored, instead of desyncing the button label from whether '
+    'training is actually running',
+    (tester) async {
+      final gate = Completer<void>();
+      final engine = TrainingEngine(audioPlayer: _FakePlayer());
+      await tester.pumpWidget(
+        wrap(
+          TrainingScreen(
+            trainingEngine: engine,
+            answerSpeaker: _FakeSpeaker(),
+            responseListener: _FakeResponseListener(),
+            headphonesConnectedCheck: () async => true,
+            // Simulates a slow real platform call landing between the
+            // button optimistically flipping to "Stop" and the engine
+            // actually starting.
+            reconfigureAudioSessionOnStart: () => gate.future,
+            activateAudioSessionOnStart: () async {},
+            deactivateAudioSessionOnStop: () async {},
+          ),
+        ),
+      );
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      expect(find.text('Stop'), findsOneWidget);
+      expect(engine.isRunning, isFalse);
+
+      // Lands while the first call is still awaiting the gate -- must
+      // be a no-op rather than acting on the not-yet-settled state.
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      gate.complete();
+      await tester.pump();
+      await tester.pump();
+
+      expect(engine.isRunning, isTrue);
+      expect(find.text('Stop'), findsOneWidget);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
     'Character Speed and Recognition Time stay adjustable while training',
     (tester) async {
       await tester.pumpWidget(wrapTraining());
@@ -194,8 +338,10 @@ void main() {
       await tester.pump();
 
       final addButtons = find.byIcon(Icons.add_circle_outline);
+      await tester.ensureVisible(addButtons.first);
       await tester.tap(addButtons.first); // Character Speed is first
       await tester.pump();
+      await tester.ensureVisible(addButtons.at(1));
       await tester.tap(addButtons.at(1)); // Recognition Time is second
       await tester.pump();
 
@@ -227,46 +373,181 @@ void main() {
     expect(chip.onSelected, isNotNull);
   });
 
+  testWidgets('starts and stops listening for the learner\'s spoken response '
+      'alongside Start/Stop', (tester) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(wrapTraining(responseListener: listener));
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    expect(listener.startListeningCalls, ['start']);
+    expect(listener.stopListeningCalls, isEmpty);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+    expect(listener.stopListeningCalls, ['stop']);
+  });
+
+  testWidgets('opens Settings from the app bar icon, and turning Speech '
+      'Recognition off there before Start skips startListening', (
+    tester,
+  ) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(wrapTraining(responseListener: listener));
+
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pump();
+    final settingsFinder = _pushedSettingsScreen();
+    tester.widget<SettingsScreen>(settingsFinder).onRecognitionChanged(false);
+    Navigator.of(tester.element(settingsFinder)).pop();
+    await tester.pump();
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+
+    expect(listener.startListeningCalls, isEmpty);
+  });
+
+  testWidgets('toggling Speech Recognition off in Settings mid-session stops '
+      'listening immediately, back on starts it again', (tester) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(wrapTraining(responseListener: listener));
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    expect(listener.startListeningCalls, ['start']);
+
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pump();
+    final settingsFinder = _pushedSettingsScreen();
+    final settings = tester.widget<SettingsScreen>(settingsFinder);
+    settings.onRecognitionChanged(false);
+    await tester.pump();
+    expect(listener.stopListeningCalls, ['stop']);
+
+    settings.onRecognitionChanged(true);
+    await tester.pump();
+    expect(listener.startListeningCalls, ['start', 'start']);
+
+    Navigator.of(tester.element(settingsFinder)).pop();
+    await tester.pump();
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+  });
+
   testWidgets(
-    'reports started/stopped to the audio reporter on Start/Stop',
+    'forwards a recognized character to TrainingEngine.submitResponse',
     (tester) async {
-      final reporter = _FakeSessionReporter();
-      await tester.pumpWidget(wrapTraining(audioReporter: reporter));
+      final listener = _FakeResponseListener();
+      final engine = TrainingEngine(audioPlayer: _FakePlayer());
+      await tester.pumpWidget(
+        wrap(
+          TrainingScreen(
+            trainingEngine: engine,
+            answerSpeaker: _FakeSpeaker(),
+            responseListener: listener,
+            headphonesConnectedCheck: () async => true,
+            reconfigureAudioSessionOnStart: () async {},
+            activateAudioSessionOnStart: () async {},
+            deactivateAudioSessionOnStop: () async {},
+          ),
+        ),
+      );
+      final correct = <String>[];
+      engine.onCorrectResponse = correct.add;
 
       await tester.ensureVisible(find.text('Start'));
       await tester.tap(find.text('Start'));
       await tester.pump();
-      expect(reporter.events, ['started']);
+
+      // Default character speed (90 WPM) comfortably covers even the
+      // longest letter's playback within 250ms, so the first
+      // character's recognition timer is running by then, well before
+      // its 500ms deadline. Which letter was actually generated is
+      // deliberately never surfaced (morse_icr_spec.md section 24
+      // forbids displaying it), so every letter is "recognized" --
+      // submitResponse no-ops for the ones that don't match whatever
+      // was actually generated.
+      await tester.pump(const Duration(milliseconds: 250));
+      for (final letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
+        listener.onRecognized?.call(letter);
+      }
+      await tester.pump(const Duration(milliseconds: 10));
+
+      expect(correct, isNotEmpty);
 
       await tester.tap(find.text('Stop'));
       await tester.pump();
-      expect(reporter.events, ['started', 'stopped']);
     },
   );
 
-  testWidgets(
-    'a remote Stop request (lock screen/notification) stops training',
-    (tester) async {
-      final reporter = _FakeSessionReporter();
-      await tester.pumpWidget(wrapTraining(audioReporter: reporter));
+  testWidgets('shows a green dot for a correct response, cleared on the next '
+      'character', (tester) async {
+    final listener = _FakeResponseListener();
+    final engine = TrainingEngine(audioPlayer: _FakePlayer());
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          trainingEngine: engine,
+          answerSpeaker: _FakeSpeaker(),
+          responseListener: listener,
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
-      await tester.ensureVisible(find.text('Start'));
-      await tester.tap(find.text('Start'));
-      await tester.pump();
-      expect(find.text('Training…'), findsOneWidget);
+    bool hasDot() =>
+        tester
+            .widget<SizedBox>(find.byKey(const Key('correctResponseIndicator')))
+            .child !=
+        null;
 
-      reporter.onStopRequestedCallback!();
-      await tester.pump();
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    expect(hasDot(), isFalse);
 
-      expect(find.text('Idle'), findsOneWidget);
-      expect(reporter.events, ['started', 'stopped']);
-    },
-  );
+    // Section 24: the generated character is never surfaced, so
+    // every letter is fed to the listener callback and
+    // submitResponse no-ops for the ones that don't match whatever
+    // was actually generated.
+    await tester.pump(const Duration(milliseconds: 250));
+    for (final letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
+      listener.onRecognized?.call(letter);
+    }
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(hasDot(), isTrue);
+
+    // Advances past the rest of the recognition window (default
+    // 500ms) into the next character, which should clear the dot
+    // even though nothing was said for it.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(hasDot(), isFalse);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+  });
 
   testWidgets('Start is disabled when no character set is selected', (
     tester,
   ) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
+    await tester.pumpWidget(
+      wrap(
+        TrainingScreen(
+          answerSpeaker: _FakeSpeaker(),
+          headphonesConnectedCheck: () async => true,
+          reconfigureAudioSessionOnStart: () async {},
+          activateAudioSessionOnStart: () async {},
+          deactivateAudioSessionOnStop: () async {},
+        ),
+      ),
+    );
 
     await tester.tap(find.text('A-Z')); // deselect the only active set
     await tester.pump();
@@ -277,90 +558,76 @@ void main() {
     expect(button.onPressed, isNull);
   });
 
-  testWidgets('shows a running characters-played counter while training', (
-    tester,
-  ) async {
-    await tester.pumpWidget(wrapTraining());
-
-    expect(find.textContaining('Characters played'), findsNothing);
+  testWidgets('announces the character via AnswerSpeaker once its recognition '
+      'deadline lapses', (tester) async {
+    final speaker = _FakeSpeaker();
+    await tester.pumpWidget(wrapTraining(answerSpeaker: speaker));
 
     await tester.ensureVisible(find.text('Start'));
     await tester.tap(find.text('Start'));
     await tester.pump();
 
-    expect(find.textContaining('Characters played:'), findsOneWidget);
+    // Default character speed (90 WPM) plus default recognition time
+    // (500 ms) comfortably fit within this window for any letter.
+    await tester.pump(const Duration(milliseconds: 900));
+
+    expect(speaker.spoken, isNotEmpty);
+    expect(speaker.spoken, everyElement(matches(RegExp(r'^[A-Z]$'))));
 
     await tester.tap(find.text('Stop'));
     await tester.pump();
   });
 
   testWidgets(
-    'announces the character via AnswerSpeaker once its recognition '
-    'deadline lapses',
+    'passes voicePreparing through to Settings while the real TTS voice '
+    'is being prepared',
+    (tester) async {
+      await tester.pumpWidget(wrap(const TrainingScreen()));
+
+      await tester.tap(find.byIcon(Icons.settings));
+      await tester.pump();
+
+      expect(
+        find.text('Preparing voice…', skipOffstage: false),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('does not show "Preparing voice…" in Settings for a non-TTS '
+      'AnswerSpeaker', (tester) async {
+    await tester.pumpWidget(wrapTraining());
+
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pump();
+
+    expect(find.text('Preparing voice…', skipOffstage: false), findsNothing);
+  });
+
+  testWidgets(
+    'opens Settings from the app bar icon, and turning Voice off there '
+    'suppresses the computer announcement',
     (tester) async {
       final speaker = _FakeSpeaker();
       await tester.pumpWidget(wrapTraining(answerSpeaker: speaker));
+
+      await tester.tap(find.byIcon(Icons.settings));
+      await tester.pump();
+      final settingsFinder = _pushedSettingsScreen();
+      tester.widget<SettingsScreen>(settingsFinder).onVoiceChanged(false);
+      Navigator.of(tester.element(settingsFinder)).pop();
+      await tester.pump();
 
       await tester.ensureVisible(find.text('Start'));
       await tester.tap(find.text('Start'));
       await tester.pump();
 
-      // Default character speed (90 WPM) plus default recognition time
-      // (500 ms) comfortably fit within this window for any letter.
       await tester.pump(const Duration(milliseconds: 900));
 
-      expect(speaker.spoken, isNotEmpty);
-      expect(speaker.spoken, everyElement(matches(RegExp(r'^[A-Z]$'))));
+      expect(speaker.spoken, isEmpty);
 
       await tester.tap(find.text('Stop'));
       await tester.pump();
     },
   );
-
-  testWidgets(
-    'shows "Preparing voice…" while the real TTS voice is being prepared',
-    (tester) async {
-      await tester.pumpWidget(wrap(const TrainingScreen()));
-
-      expect(find.text('Preparing voice…'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'does not show "Preparing voice…" for a non-TTS AnswerSpeaker',
-    (tester) async {
-      await tester.pumpWidget(wrapTraining());
-
-      expect(find.text('Preparing voice…'), findsNothing);
-    },
-  );
-
-  testWidgets('Voice switch defaults to on', (tester) async {
-    await tester.pumpWidget(wrap(TrainingScreen(answerSpeaker: _FakeSpeaker())));
-
-    final voiceSwitch = tester.widget<Switch>(find.byType(Switch));
-    expect(voiceSwitch.value, isTrue);
-  });
-
-  testWidgets('turning Voice off suppresses the computer announcement', (
-    tester,
-  ) async {
-    final speaker = _FakeSpeaker();
-    await tester.pumpWidget(wrapTraining(answerSpeaker: speaker));
-
-    await tester.tap(find.byType(Switch));
-    await tester.pump();
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
-
-    await tester.ensureVisible(find.text('Start'));
-    await tester.tap(find.text('Start'));
-    await tester.pump();
-
-    await tester.pump(const Duration(milliseconds: 900));
-
-    expect(speaker.spoken, isEmpty);
-
-    await tester.tap(find.text('Stop'));
-    await tester.pump();
-  });
 }

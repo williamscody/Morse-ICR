@@ -4,13 +4,21 @@ import 'package:morse_icr/speech/spoken_character.dart';
 void main() {
   group('spokenTextFor', () {
     test('spells out letters explicitly rather than a bare character', () {
-      expect(spokenTextFor('A'), 'ay');
+      expect(spokenTextFor('B'), 'bee');
       expect(spokenTextFor('Y'), 'why');
       expect(spokenTextFor('Z'), 'zee');
     });
 
+    // A and E are the exceptions -- spelled-out alternatives ("ay",
+    // "ee") were mispronounced on-device, so these stay as the bare
+    // letter, which TTS engines pronounce correctly on their own.
+    test('uses the bare letter for A and E', () {
+      expect(spokenTextFor('A'), 'a');
+      expect(spokenTextFor('E'), 'e');
+    });
+
     test('accepts lowercase input for letters', () {
-      expect(spokenTextFor('a'), 'ay');
+      expect(spokenTextFor('a'), 'a');
     });
 
     test('spells out digits explicitly rather than a bare numeral', () {
