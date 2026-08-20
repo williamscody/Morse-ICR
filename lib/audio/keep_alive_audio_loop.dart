@@ -25,14 +25,43 @@ import 'pcm16_wav.dart';
 /// iOS's background-audio grant continuously satisfied -- the standard
 /// fix for this class of "bursty" background-audio app (interval
 /// timers, meditation-bell apps, and similar).
+///
+/// A louder/more assertive tone (200Hz, 0.3 amplitude, 0.1 volume) was
+/// tried on 2026-08-20 to test whether it earned the process a stronger
+/// background priority classification from iOS, hoping to reduce
+/// `play()`'s own native acknowledgment latency climbing the longer the
+/// phone stays locked (~300ms right after locking to ~600ms after ~8s
+/// locked, reset instantly on resume -- morse_icr project memory).
+/// Confirmed on-device to make no difference to that latency while
+/// adding a real, unwanted audible hum -- reverted back to these
+/// original values. That climbing latency is better explained as iOS
+/// progressively deprioritizing a backgrounded process's own thread
+/// scheduling over time, independent of what audio it happens to be
+/// playing.
 class KeepAliveAudioLoop {
-  KeepAliveAudioLoop({AudioPlayer? player}) : _player = player ?? AudioPlayer();
+  // See TurnAudioEngine's matching constructor comment --
+  // handleAudioSessionActivation: false avoids this player redundantly
+  // reactivating the shared AVAudioSession (which TrainingScreen
+  // already owns explicitly) on every play() call.
+  KeepAliveAudioLoop({AudioPlayer? player})
+    : _player = player ?? AudioPlayer(handleAudioSessionActivation: false);
 
   AudioPlayer _player;
 
   static final Uint8List _loopWav = _synthesizeQuietLoop();
 
   Future<void> start() async {
+    // start()/stop() are both called fire-and-forget from TrainingScreen
+    // (see its Start/Stop handlers), so a fast Stop-then-Start doesn't
+    // guarantee the previous stop() has actually landed natively before
+    // this runs. just_audio's native setAudioSource() auto-starts a
+    // newly loaded source immediately if its own `playing` flag is
+    // still true (AudioPlayer.m:606-720) -- normally harmless here
+    // since this method plays anyway, except it would do so at
+    // whatever volume/loop mode was left over from before setLoopMode/
+    // setVolume below get to run. Pausing first (a no-op if already
+    // paused) avoids that.
+    await _player.pause();
     // setAudioSource before setLoopMode -- on-device measurement found
     // the reverse order (loop mode set before any source existed) made
     // the final play() call take ~10s to resolve, vs. ~100-300ms for
@@ -51,12 +80,12 @@ class KeepAliveAudioLoop {
 
   Future<void> stop() => _player.stop();
 
-  /// See [MorseAudioEngine.resetPlayer] -- the same just_audio
+  /// See [TurnAudioEngine.resetPlayer] -- the same just_audio
   /// local-proxy-server staleness applies here too. Callers should
   /// [start] again afterward if the loop should still be running.
   Future<void> resetPlayer() async {
     final old = _player;
-    _player = AudioPlayer();
+    _player = AudioPlayer(handleAudioSessionActivation: false);
     await old.dispose();
   }
 

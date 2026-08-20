@@ -1,15 +1,40 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:morse_icr/audio/morse_character_player.dart';
+import 'package:morse_icr/audio/turn_player.dart';
+import 'package:morse_icr/morse/morse_event.dart';
 import 'package:morse_icr/training/training_engine.dart';
 
 const _recognitionTime = Duration(milliseconds: 20);
 
+Duration _characterDuration(String character, double wpm) {
+  final seconds = morseElementsForCharacter(
+    character,
+    wpm,
+  ).fold<double>(0, (sum, e) => sum + e.durationSeconds);
+  return Duration(microseconds: (seconds * 1e6).round());
+}
+
+/// The [TurnTiming] a real [TurnAudioEngine] would produce for
+/// [character] at [wpm] with [recognitionTime] of silence and no cached
+/// answer -- fakes below use this so submitResponse's "beat the
+/// computer" window and the loop's own pacing behave exactly as they
+/// would against real Morse timing, without needing real audio.
+TurnTiming _timingFor(String character, double wpm, Duration recognitionTime) {
+  final morseEnd = _characterDuration(character, wpm);
+  final answerStart = morseEnd + recognitionTime;
+  return TurnTiming(
+    morseEnd: morseEnd,
+    answerStart: answerStart,
+    totalDuration: answerStart,
+    hasAnswer: false,
+  );
+}
+
 void main() {
   group('TrainingEngine', () {
     test('throws when starting with an empty character set', () {
-      final engine = TrainingEngine(audioPlayer: _RecordingPlayer());
+      final engine = TrainingEngine(turnPlayer: _RecordingPlayer());
       expect(
         () => engine.start(
           characters: const [],
@@ -25,7 +50,7 @@ void main() {
       'generates and plays characters from the active set while running',
       () async {
         final player = _RecordingPlayer();
-        final engine = TrainingEngine(audioPlayer: player);
+        final engine = TrainingEngine(turnPlayer: player);
 
         engine.start(
           characters: const ['E'],
@@ -45,7 +70,7 @@ void main() {
 
     test('stop halts further character generation', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
 
       engine.start(
         characters: const ['E'],
@@ -63,7 +88,7 @@ void main() {
 
     test('onCharacterGenerated fires for each generated character', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final generated = <String>[];
       engine.onCharacterGenerated = generated.add;
 
@@ -81,7 +106,7 @@ void main() {
 
     test('a playback failure does not stop the training loop', () async {
       final player = _ThrowingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
 
       engine.start(
         characters: const ['E'],
@@ -96,7 +121,7 @@ void main() {
 
     test('calling start while already running has no effect', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
 
       engine.start(
         characters: const ['E'],
@@ -117,7 +142,7 @@ void main() {
 
     test('selects only from the provided character set', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       const characters = ['A', 'B', 'C'];
 
       engine.start(
@@ -138,7 +163,7 @@ void main() {
       'updateSettings changes the wpm used for characters generated afterward',
       () async {
         final player = _RecordingPlayer();
-        final engine = TrainingEngine(audioPlayer: player);
+        final engine = TrainingEngine(turnPlayer: player);
 
         engine.start(
           characters: const ['E'],
@@ -159,7 +184,7 @@ void main() {
     test('updateSettings changes recognitionTime for the gap between '
         'characters generated afterward', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
 
       engine.start(
         characters: const ['E'],
@@ -180,7 +205,7 @@ void main() {
     test('onRecognitionTimeout fires once per character once its recognition '
         'deadline expires', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final timedOut = <String>[];
       engine.onRecognitionTimeout = (c) async => timedOut.add(c);
 
@@ -194,9 +219,9 @@ void main() {
 
       expect(timedOut, isNotEmpty);
       expect(timedOut, everyElement('E'));
-      // stop() can land mid-recognition-wait for the most recently
-      // played character, cancelling its timer before it expires, so
-      // timedOut may trail played by at most one.
+      // stop() can land mid-turn-wait for the most recently played
+      // character, cancelling its timer before it expires, so timedOut
+      // may trail played by at most one.
       expect(timedOut.length, greaterThanOrEqualTo(player.played.length - 1));
       expect(timedOut.length, lessThanOrEqualTo(player.played.length));
     });
@@ -204,7 +229,7 @@ void main() {
     test('onRecognitionTimeout only fires after that character has finished '
         'playing (morse_icr_spec.md section 29)', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final events = <String>[];
       engine.onCharacterGenerated = (c) => events.add('generated:$c');
       engine.onRecognitionTimeout = (c) async => events.add('timeout:$c');
@@ -220,8 +245,8 @@ void main() {
       // Each timeout must be preceded by a generation of the same
       // character, and playback (awaited synchronously in the fake
       // player before generation of the *next* character) always
-      // completes before the recognition timer -- and therefore its
-      // timeout -- can start.
+      // completes before the turn's own total-duration wait -- and
+      // therefore its timeout -- can elapse.
       expect(events.first, startsWith('generated:'));
       for (var i = 0; i < events.length; i++) {
         if (events[i].startsWith('timeout:')) {
@@ -233,7 +258,7 @@ void main() {
     test('stopping mid-recognition-wait does not fire onRecognitionTimeout '
         'for the in-progress character', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final timedOut = <String>[];
       engine.onRecognitionTimeout = (c) async => timedOut.add(c);
 
@@ -257,7 +282,7 @@ void main() {
     test('the next character does not start until onRecognitionTimeout\'s '
         'future completes', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final releaseHook = Completer<void>();
       engine.onRecognitionTimeout = (_) => releaseHook.future;
 
@@ -284,7 +309,7 @@ void main() {
         'the computer still announces the answer regardless (kept on for '
         'debugging pending a future settings toggle)', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final correct = <String>[];
       final timedOut = <String>[];
       engine.onCorrectResponse = correct.add;
@@ -295,8 +320,8 @@ void main() {
         wpm: 150,
         recognitionTime: const Duration(milliseconds: 20),
       );
-      // After 'E's own ~8ms audio duration (so the recognition timer
-      // has actually started) but before its 20ms deadline.
+      // After 'E's own ~8ms audio duration (so the recognition window
+      // has actually opened) but before its 20ms deadline.
       await Future<void>.delayed(const Duration(milliseconds: 15));
       engine.submitResponse('E');
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -310,7 +335,7 @@ void main() {
     test('submitResponse only fires onCorrectResponse once per character, '
         'even if called again before the deadline expires', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final correct = <String>[];
       engine.onCorrectResponse = correct.add;
 
@@ -332,7 +357,7 @@ void main() {
     test('submitResponse with a character that does not match the awaited '
         'one is ignored, leaving the deadline to expire normally', () async {
       final player = _RecordingPlayer();
-      final engine = TrainingEngine(audioPlayer: player);
+      final engine = TrainingEngine(turnPlayer: player);
       final correct = <String>[];
       final timedOut = <String>[];
       engine.onCorrectResponse = correct.add;
@@ -358,7 +383,7 @@ void main() {
       "character supersedes it -- a late response didn't beat the computer",
       () async {
         final player = _RecordingPlayer();
-        final engine = TrainingEngine(audioPlayer: player);
+        final engine = TrainingEngine(turnPlayer: player);
         final correct = <String>[];
         engine.onCorrectResponse = correct.add;
 
@@ -384,14 +409,92 @@ void main() {
     test(
       'submitResponse when no recognition deadline is running is a no-op',
       () {
-        final engine = TrainingEngine(audioPlayer: _RecordingPlayer());
+        final engine = TrainingEngine(turnPlayer: _RecordingPlayer());
         final correct = <String>[];
         engine.onCorrectResponse = correct.add;
 
-        // Never started -- no recognition timer is running.
+        // Never started -- no turn has ever played.
         engine.submitResponse('E');
 
         expect(correct, isEmpty);
+      },
+    );
+
+    test('pre-fetches the next character during the recognition-time wait '
+        'and plays it via playPrepared instead of playTurn', () async {
+      final player = _PrefetchingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 30),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await engine.stop();
+
+      // The very first character has nothing prepared yet, so it
+      // must go through the cold path -- every character after that
+      // should have been prepared ahead of time and played via
+      // playPrepared.
+      expect(player.playedCold, ['E']);
+      expect(player.playedPrepared, isNotEmpty);
+      expect(player.playedPrepared, everyElement('E'));
+      // stop() can land right as the final pre-fetch for this
+      // iteration finishes but before the loop gets back around to
+      // consume it, so prepared may lead playedPrepared by at most
+      // one (same tolerance as the onRecognitionTimeout test above).
+      expect(
+        player.prepared.length,
+        inInclusiveRange(
+          player.playedPrepared.length,
+          player.playedPrepared.length + 1,
+        ),
+      );
+    });
+
+    test('stop() cancels a character that was prepared but not yet played, '
+        'so it can never be played later', () async {
+      final player = _PrefetchingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 300),
+      );
+      // Let the first character play (and its prepare-ahead for the
+      // next one complete) before stopping mid-recognition-wait --
+      // well before that prepared character is ever consumed.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(player.prepared, isNotEmpty);
+      await engine.stop();
+      // stop()'s cancelPrepared() call is fire-and-forget.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(await player.playPrepared(), isNull);
+    });
+
+    test(
+      'falls back to playTurn when nothing was successfully prepared in time',
+      () async {
+        final player = _RecordingPlayer();
+        final engine = TrainingEngine(turnPlayer: player);
+
+        engine.start(
+          characters: const ['E'],
+          wpm: 150,
+          recognitionTime: _recognitionTime,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await engine.stop();
+
+        // _RecordingPlayer doesn't override prepareTurn/playPrepared, so
+        // it inherits TurnPlayer's no-op defaults -- every character,
+        // not just the first, must still end up played via the cold
+        // path.
+        expect(player.played, isNotEmpty);
+        expect(player.played, everyElement('E'));
       },
     );
 
@@ -399,7 +502,7 @@ void main() {
       'a longer recognitionTime widens the gap between characters',
       () async {
         final fastPlayer = _RecordingPlayer();
-        final fastEngine = TrainingEngine(audioPlayer: fastPlayer);
+        final fastEngine = TrainingEngine(turnPlayer: fastPlayer);
         fastEngine.start(
           characters: const ['E'],
           wpm: 150,
@@ -407,7 +510,7 @@ void main() {
         );
 
         final slowPlayer = _RecordingPlayer();
-        final slowEngine = TrainingEngine(audioPlayer: slowPlayer);
+        final slowEngine = TrainingEngine(turnPlayer: slowPlayer);
         slowEngine.start(
           characters: const ['E'],
           wpm: 150,
@@ -421,26 +524,109 @@ void main() {
         expect(fastPlayer.played.length, greaterThan(slowPlayer.played.length));
       },
     );
+
+    test('isVoiceEnabled false suppresses onRecognitionTimeout for turns '
+        'generated while it was off', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final timedOut = <String>[];
+      engine.onRecognitionTimeout = (c) async => timedOut.add(c);
+      engine.isVoiceEnabled = () => false;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: _recognitionTime,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await engine.stop();
+
+      expect(player.played, isNotEmpty);
+      expect(timedOut, isEmpty);
+    });
   });
 }
 
-class _RecordingPlayer implements MorseCharacterPlayer {
+class _RecordingPlayer extends TurnPlayer {
   final List<String> played = [];
   final List<double> wpms = [];
 
   @override
-  Future<void> playCharacter(String character, double wpm) async {
+  Future<TurnTiming> playTurn(
+    String character,
+    double wpm,
+    Duration recognitionTime, {
+    required bool includeAnswer,
+  }) async {
     played.add(character);
     wpms.add(wpm);
+    return _timingFor(character, wpm, recognitionTime);
   }
 }
 
-class _ThrowingPlayer implements MorseCharacterPlayer {
+class _ThrowingPlayer extends TurnPlayer {
   int callCount = 0;
 
   @override
-  Future<void> playCharacter(String character, double wpm) async {
+  Future<TurnTiming> playTurn(
+    String character,
+    double wpm,
+    Duration recognitionTime, {
+    required bool includeAnswer,
+  }) async {
     callCount++;
     throw Exception('playback failed');
+  }
+}
+
+/// Unlike [_RecordingPlayer], actually implements the prepare-ahead
+/// contract, so tests here can verify TrainingEngine uses it instead of
+/// always falling back to [TurnPlayer.playTurn].
+class _PrefetchingPlayer extends TurnPlayer {
+  final List<String> prepared = [];
+  final List<String> playedPrepared = [];
+  final List<String> playedCold = [];
+  String? _readyCharacter;
+  double? _readyWpm;
+  Duration? _readyRecognitionTime;
+
+  @override
+  Future<void> prepareTurn(
+    String character,
+    double wpm,
+    Duration recognitionTime, {
+    required bool includeAnswer,
+  }) async {
+    prepared.add(character);
+    _readyCharacter = character;
+    _readyWpm = wpm;
+    _readyRecognitionTime = recognitionTime;
+  }
+
+  @override
+  Future<TurnTiming?> playPrepared() async {
+    final character = _readyCharacter;
+    if (character == null) return null;
+    final wpm = _readyWpm!;
+    final recognitionTime = _readyRecognitionTime!;
+    _readyCharacter = null;
+    playedPrepared.add(character);
+    return _timingFor(character, wpm, recognitionTime);
+  }
+
+  @override
+  Future<TurnTiming> playTurn(
+    String character,
+    double wpm,
+    Duration recognitionTime, {
+    required bool includeAnswer,
+  }) async {
+    playedCold.add(character);
+    return _timingFor(character, wpm, recognitionTime);
+  }
+
+  @override
+  Future<void> cancelPrepared() async {
+    _readyCharacter = null;
   }
 }

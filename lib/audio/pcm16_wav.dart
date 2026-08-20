@@ -47,3 +47,29 @@ Uint8List pcm16WavBytes(Int16List samples, {required int sampleRate}) {
 
   return builder.toBytes();
 }
+
+/// Parses the 'data' chunk of a mono 16-bit-PCM RIFF/WAVE file -- the
+/// inverse of [pcm16WavBytes] -- into raw samples.
+///
+/// Used to pull [TtsAnswerSpeaker]'s cached answer audio (already
+/// converted to this format by `convertToPcm16Wav`) back out as raw
+/// samples for [TurnAudioEngine] to splice into a combined per-turn
+/// buffer, and for trimming trailing silence before caching.
+Int16List readPcm16Samples(Uint8List wavBytes) {
+  final data = ByteData.sublistView(wavBytes);
+  var offset = 12;
+  while (offset + 8 <= wavBytes.length) {
+    final id = String.fromCharCodes(wavBytes, offset, offset + 4);
+    final size = data.getUint32(offset + 4, Endian.little);
+    final start = offset + 8;
+    if (id == 'data') {
+      final samples = Int16List(size ~/ 2);
+      for (var i = 0; i < samples.length; i++) {
+        samples[i] = data.getInt16(start + i * 2, Endian.little);
+      }
+      return samples;
+    }
+    offset = start + size + (size.isOdd ? 1 : 0);
+  }
+  throw const FormatException('no data chunk found');
+}

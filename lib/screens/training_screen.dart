@@ -6,7 +6,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../audio/audio_session_setup.dart';
 import '../audio/keep_alive_audio_loop.dart';
-import '../audio/morse_audio_engine.dart';
+import '../audio/turn_audio_engine.dart';
 import '../debug_log.dart';
 import '../speech/answer_speaker.dart';
 import '../speech/response_listener.dart';
@@ -30,7 +30,7 @@ import 'widgets/stepped_int_control.dart';
 class TrainingScreen extends StatefulWidget {
   /// [trainingEngine], [answerSpeaker], and [responseListener] let tests
   /// substitute fakes so they don't have to exercise the real
-  /// [MorseAudioEngine] platform plugin, real text-to-speech, or a real
+  /// [TurnAudioEngine] platform plugin, real text-to-speech, or a real
   /// microphone; production code always omits them and gets the real
   /// implementations. [headphonesConnectedCheck] defaults to a real
   /// [hasNonSpeakerAudioOutput] platform check, and
@@ -87,7 +87,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   bool _recognitionEnabled = true;
   bool _lastResponseCorrect = false;
 
-  MorseAudioEngine? _audioEngine;
+  TurnAudioEngine? _turnAudioEngine;
   KeepAliveAudioLoop? _keepAliveLoop;
   late final TrainingEngine _trainingEngine;
   late final AnswerSpeaker _answerSpeaker;
@@ -97,15 +97,15 @@ class _TrainingScreenState extends State<TrainingScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _answerSpeaker = widget._injectedAnswerSpeaker ?? TtsAnswerSpeaker();
     if (widget._injectedTrainingEngine != null) {
       _trainingEngine = widget._injectedTrainingEngine!;
     } else {
-      final audioEngine = MorseAudioEngine();
-      _audioEngine = audioEngine;
-      _trainingEngine = TrainingEngine(audioPlayer: audioEngine);
+      final turnEngine = TurnAudioEngine(answerSpeaker: _answerSpeaker);
+      _turnAudioEngine = turnEngine;
+      _trainingEngine = TrainingEngine(turnPlayer: turnEngine);
       _keepAliveLoop = KeepAliveAudioLoop();
     }
-    _answerSpeaker = widget._injectedAnswerSpeaker ?? TtsAnswerSpeaker();
     _responseListener =
         widget._injectedResponseListener ?? SpeechToTextResponseListener();
     final answerSpeaker = _answerSpeaker;
@@ -132,9 +132,12 @@ class _TrainingScreenState extends State<TrainingScreen>
       unawaited(_responseListener.restart());
     };
     // The Voice switch is the sole authority on whether the computer
-    // speaks -- checked at the moment the deadline expires, not when
-    // training started, so toggling it mid-session takes effect
-    // immediately. Scoring the response is out of scope until Milestone 9.
+    // speaks -- checked once per character, at the moment its turn is
+    // generated (TrainingEngine.isVoiceEnabled), so toggling it
+    // mid-session takes effect starting the next character, the same
+    // "never interrupts a turn already in progress" rule speed and
+    // recognition-time changes already follow. Scoring the response is
+    // out of scope until Milestone 9.
     //
     // No muting around this: [SpeechToTextResponseListener] keeps the
     // mic listening continuously through the computer's own
@@ -147,10 +150,14 @@ class _TrainingScreenState extends State<TrainingScreen>
     // the acoustic level instead, by requiring headphones whenever
     // recognition is on (see [_toggleTraining]/[_onRecognitionChanged]),
     // so the mic has nothing of the computer's own voice to hear.
-    _trainingEngine.onRecognitionTimeout = (character) {
-      if (!_voiceEnabled) return Future<void>.value();
-      return _answerSpeaker.speak(character);
-    };
+    _trainingEngine.isVoiceEnabled = () => _voiceEnabled;
+    // Live-fallback only: fires when TurnAudioEngine couldn't bake the
+    // answer into the turn's own pre-mixed audio (not yet cached, or
+    // Voice was off when this turn was generated). The normal case needs
+    // no wiring here at all -- the answer already played automatically
+    // as part of the turn's own buffer (morse_icr project memory: the
+    // pre-mix architecture).
+    _trainingEngine.onRecognitionTimeout = _answerSpeaker.speak;
     // A simple green-dot indicator that the learner's spoken response
     // was recognized -- not scoring (Milestone 9), just visible
     // confirmation that recognition is doing something, since the
@@ -163,12 +170,31 @@ class _TrainingScreenState extends State<TrainingScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _resumeDebounceTimer?.cancel();
     _trainingEngine.stop();
-    _audioEngine?.dispose();
+    _turnAudioEngine?.dispose();
     _keepAliveLoop?.dispose();
     _responseListener.stopListening();
     super.dispose();
   }
+
+  // iOS sends a brief, spurious resumed->inactive->hidden->paused blip
+  // right at the moment the screen locks (confirmed on-device: this
+  // round-trips in well under 100ms in every captured log, vs. an
+  // actual resume which persists). Reacting to that blip as a real
+  // resume was itself a bug -- it tore down and recreated
+  // [_keepAliveLoop]'s player (see [_reactivateAudioSession]) right as
+  // iOS was about to check for continuous background playback before
+  // suspending the app, so the freshly-recreated player's not-yet-
+  // acknowledged play() call couldn't satisfy that check, and iOS froze
+  // the whole process (not just audio) until the learner manually
+  // unlocked -- confirmed via a multi-second gap with zero log
+  // activity of any kind spanning exactly that window. Debouncing here
+  // means a resumed event only triggers reactivation once it's held for
+  // [_resumeDebounce] without another lifecycle transition superseding
+  // it, so the lock-time blip is silently ignored instead.
+  Timer? _resumeDebounceTimer;
+  static const _resumeDebounce = Duration(milliseconds: 500);
 
   // iOS can silently leave the shared AVAudioSession deactivated or on
   // the wrong category after the app is backgrounded and resumed
@@ -182,8 +208,13 @@ class _TrainingScreenState extends State<TrainingScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     logDebug('lifecycle: $state (isTraining=$_isTraining)');
+    _resumeDebounceTimer?.cancel();
+    _resumeDebounceTimer = null;
     if (state != AppLifecycleState.resumed) return;
-    unawaited(_reactivateAudioSession());
+    _resumeDebounceTimer = Timer(_resumeDebounce, () {
+      _resumeDebounceTimer = null;
+      unawaited(_reactivateAudioSession());
+    });
   }
 
   Future<void> _reactivateAudioSession() async {
@@ -199,10 +230,10 @@ class _TrainingScreenState extends State<TrainingScreen>
     // a background+lock+resume cycle without its own self-healing
     // noticing. Unconditional -- the break happens regardless of
     // whether a session was actively training when backgrounded (see
-    // [MorseAudioEngine.resetPlayer]), and recreating an idle player is
+    // [TurnAudioEngine.resetPlayer]), and recreating an idle player is
     // harmless.
     try {
-      await _audioEngine?.resetPlayer();
+      await _turnAudioEngine?.resetPlayer();
       final answerSpeaker = _answerSpeaker;
       if (answerSpeaker is TtsAnswerSpeaker) {
         await answerSpeaker.resetPlayer();
@@ -252,6 +283,7 @@ class _TrainingScreenState extends State<TrainingScreen>
 
   Future<void> _toggleTrainingUnguarded() async {
     if (_isTraining) {
+      logDebug('stop: tapped');
       await _trainingEngine.stop();
       try {
         await _responseListener.stopListening().timeout(
@@ -279,9 +311,11 @@ class _TrainingScreenState extends State<TrainingScreen>
         );
       }
       setState(() => _isTraining = false);
+      logDebug('stop: done');
       return;
     }
 
+    logDebug('start: tapped');
     final characters = charactersForSelection(_selectedCharacterSets);
     if (characters.isEmpty) return;
 

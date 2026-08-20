@@ -26,11 +26,16 @@ class ToneSynthesizer {
   final double rampSeconds;
 
   Uint8List synthesizeWav(List<MorseElement> elements) {
-    final samples = _renderSamples(elements);
+    final samples = renderSamples(elements);
     return pcm16WavBytes(samples, sampleRate: sampleRate);
   }
 
-  Int16List _renderSamples(List<MorseElement> elements) {
+  /// Renders [elements] to raw 16-bit PCM samples, without the WAV
+  /// container -- used by [TurnAudioEngine] to splice a character's tone
+  /// directly into a combined per-turn buffer alongside recognition-time
+  /// silence and a spoken answer, rather than wrapping and re-parsing an
+  /// intermediate WAV file.
+  Int16List renderSamples(List<MorseElement> elements) {
     final segmentSampleCounts = elements
         .map((e) => (e.durationSeconds * sampleRate).round())
         .toList();

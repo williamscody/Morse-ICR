@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:morse_icr/audio/morse_character_player.dart';
+import 'package:morse_icr/audio/turn_player.dart';
+import 'package:morse_icr/morse/morse_event.dart';
 import 'package:morse_icr/screens/settings_screen.dart';
 import 'package:morse_icr/screens/training_screen.dart';
 import 'package:morse_icr/speech/answer_speaker.dart';
@@ -22,16 +23,37 @@ Finder _pushedSettingsScreen() =>
     find.byType(SettingsScreen, skipOffstage: false);
 
 /// A no-op player so Start/Stop tests never touch the real
-/// [MorseAudioEngine] platform plugin, which has no channel mock
+/// [TurnAudioEngine] platform plugin, which has no channel mock
 /// registered under `flutter test` and hangs indefinitely if invoked.
-class _FakePlayer implements MorseCharacterPlayer {
+/// Reports real Morse-derived timing (no cached answer) so
+/// submitResponse's "beat the computer" window behaves the same as it
+/// would against real audio.
+class _FakeTurnPlayer extends TurnPlayer {
   @override
-  Future<void> playCharacter(String character, double wpm) async {}
+  Future<TurnTiming> playTurn(
+    String character,
+    double wpm,
+    Duration recognitionTime, {
+    required bool includeAnswer,
+  }) async {
+    final seconds = morseElementsForCharacter(
+      character,
+      wpm,
+    ).fold<double>(0, (sum, e) => sum + e.durationSeconds);
+    final morseEnd = Duration(microseconds: (seconds * 1e6).round());
+    final answerStart = morseEnd + recognitionTime;
+    return TurnTiming(
+      morseEnd: morseEnd,
+      answerStart: answerStart,
+      totalDuration: answerStart,
+      hasAnswer: false,
+    );
+  }
 }
 
 /// A recording speaker so tests can verify the recognition-timeout ->
 /// speech wiring without touching real text-to-speech.
-class _FakeSpeaker implements AnswerSpeaker {
+class _FakeSpeaker extends AnswerSpeaker {
   final List<String> spoken = [];
 
   @override
@@ -42,7 +64,7 @@ class _FakeSpeaker implements AnswerSpeaker {
 
 /// A no-op listener so Start/Stop tests never touch the real
 /// [SpeechToTextResponseListener] platform plugin, which -- like
-/// [_FakePlayer]'s real counterpart -- has no channel mock registered
+/// [_FakeTurnPlayer]'s real counterpart -- has no channel mock registered
 /// under `flutter test` and hangs indefinitely if invoked. Also records
 /// the callback so tests can simulate a recognized response.
 class _FakeResponseListener implements ResponseListener {
@@ -74,14 +96,14 @@ class _FakeResponseListener implements ResponseListener {
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
 
-  // A fresh TrainingEngine/screen backed by [_FakePlayer], for any test
-  // that starts training.
+  // A fresh TrainingEngine/screen backed by [_FakeTurnPlayer], for any
+  // test that starts training.
   Widget wrapTraining({
     AnswerSpeaker? answerSpeaker,
     ResponseListener? responseListener,
   }) => wrap(
     TrainingScreen(
-      trainingEngine: TrainingEngine(audioPlayer: _FakePlayer()),
+      trainingEngine: TrainingEngine(turnPlayer: _FakeTurnPlayer()),
       answerSpeaker: answerSpeaker ?? _FakeSpeaker(),
       responseListener: responseListener ?? _FakeResponseListener(),
       headphonesConnectedCheck: () async => true,
@@ -287,7 +309,7 @@ void main() {
     'training is actually running',
     (tester) async {
       final gate = Completer<void>();
-      final engine = TrainingEngine(audioPlayer: _FakePlayer());
+      final engine = TrainingEngine(turnPlayer: _FakeTurnPlayer());
       await tester.pumpWidget(
         wrap(
           TrainingScreen(
@@ -442,7 +464,7 @@ void main() {
     'forwards a recognized character to TrainingEngine.submitResponse',
     (tester) async {
       final listener = _FakeResponseListener();
-      final engine = TrainingEngine(audioPlayer: _FakePlayer());
+      final engine = TrainingEngine(turnPlayer: _FakeTurnPlayer());
       await tester.pumpWidget(
         wrap(
           TrainingScreen(
@@ -487,7 +509,7 @@ void main() {
   testWidgets('shows a green dot for a correct response, cleared on the next '
       'character', (tester) async {
     final listener = _FakeResponseListener();
-    final engine = TrainingEngine(audioPlayer: _FakePlayer());
+    final engine = TrainingEngine(turnPlayer: _FakeTurnPlayer());
     await tester.pumpWidget(
       wrap(
         TrainingScreen(

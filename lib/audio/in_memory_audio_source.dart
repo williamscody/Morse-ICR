@@ -6,7 +6,7 @@ import 'package:just_audio/just_audio.dart';
 ///
 /// package:just_audio has no built-in equivalent to package:audioplayers'
 /// `BytesSource` -- this is the documented pattern for one, shared by
-/// [MorseAudioEngine] and [TtsAnswerSpeaker] rather than each
+/// [TurnAudioEngine] and [TtsAnswerSpeaker] rather than each
 /// reinventing it.
 class InMemoryAudioSource extends StreamAudioSource {
   InMemoryAudioSource(this._bytes);
