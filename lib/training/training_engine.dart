@@ -214,6 +214,20 @@ class TrainingEngine {
         await prepareFuture;
         prepareFuture = null;
       }
+      // [stop] can land while the await above is still pending -- it
+      // doesn't cancel prepareFuture, only unblocks _wait (see the
+      // class-level comment on the local prepare* variables) -- so by
+      // the time it resolves, this session may already be over. Without
+      // this check, the loop would go on to call playPrepared/playTurn
+      // for a character stop() never asked for, issuing a genuinely new
+      // play() call that stopPlayback() -- already run once, earlier,
+      // as part of stop() -- has no way to know about or ever pause.
+      // Confirmed on-device as a second, distinct route to the same
+      // "play() never resolves, TurnAudioEngine's queue wedges forever"
+      // failure the stopPlayback() fix in [stop] addresses for a turn
+      // already mid-playback: this is the same failure for a turn that
+      // hadn't started playing at all yet when Stop was pressed.
+      if (!_running) break;
 
       final String character;
       final double wpm;

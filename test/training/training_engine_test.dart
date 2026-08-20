@@ -475,6 +475,39 @@ void main() {
       expect(await player.playPrepared(), isNull);
     });
 
+    test('stop() landing while a prepare-ahead is still in flight never '
+        'lets the loop play that superseded character afterward '
+        '(confirmed on-device: this previously wedged Stop/Start)', () async {
+      final player = _PrefetchingPlayer()
+        ..prepareDelay = const Duration(milliseconds: 100);
+      final engine = TrainingEngine(turnPlayer: player);
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 10),
+      );
+      // The first character plays cold and its own totalDuration
+      // (morse tone + 10ms recognition) is much shorter than
+      // prepareDelay, so by the time the loop is back at the top of
+      // its next iteration, the prepare-ahead kicked off for the
+      // second character is still in flight -- stop() lands squarely
+      // inside the loop's `await prepareFuture`.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await engine.stop();
+
+      // stop() itself doesn't return until _runLoop has actually
+      // exited -- which, since prepareFuture hadn't resolved yet when
+      // stop() was called, means _runLoop was still awaiting it when
+      // stop() returned. Only one character should ever have been
+      // played: the initial cold one. Waiting past prepareDelay here
+      // confirms the loop didn't play a second, superseded one once
+      // that prepare finally resolved.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      expect(player.playedCold.length + player.playedPrepared.length, 1);
+    });
+
     test(
       'falls back to playTurn when nothing was successfully prepared in time',
       () async {
@@ -586,6 +619,9 @@ class _PrefetchingPlayer extends TurnPlayer {
   final List<String> prepared = [];
   final List<String> playedPrepared = [];
   final List<String> playedCold = [];
+  // Lets tests land stop() while prepareTurn is still in flight, to
+  // reproduce the "Stop lands mid-prepare" hang (confirmed on-device).
+  Duration prepareDelay = Duration.zero;
   String? _readyCharacter;
   double? _readyWpm;
   Duration? _readyRecognitionTime;
@@ -597,6 +633,9 @@ class _PrefetchingPlayer extends TurnPlayer {
     Duration recognitionTime, {
     required bool includeAnswer,
   }) async {
+    if (prepareDelay > Duration.zero) {
+      await Future<void>.delayed(prepareDelay);
+    }
     prepared.add(character);
     _readyCharacter = character;
     _readyWpm = wpm;
