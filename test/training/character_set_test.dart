@@ -40,18 +40,13 @@ void main() {
     });
 
     test('punctuation is exactly . , ? /', () {
-      expect(characterSets[CharacterSetType.punctuation], [
-        '.',
-        ',',
-        '?',
-        '/',
-      ]);
+      expect(characterSets[CharacterSetType.punctuation], ['.', ',', '?', '/']);
     });
 
     test('labels match the abbreviated on-screen button text', () {
       expect(CharacterSetType.letters.label, 'A-Z');
       expect(CharacterSetType.numbers.label, '0-9');
-      expect(CharacterSetType.punctuation.label, 'Pun');
+      expect(CharacterSetType.punctuation.label, 'Punct');
     });
   });
 

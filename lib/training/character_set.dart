@@ -9,13 +9,45 @@
 enum CharacterSetType { letters, numbers, punctuation, words }
 
 const List<String> _letters = [
-  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-  'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-  'U', 'V', 'W', 'X', 'Y', 'Z',
+  'A',
+  'B',
+  'C',
+  'D',
+  'E',
+  'F',
+  'G',
+  'H',
+  'I',
+  'J',
+  'K',
+  'L',
+  'M',
+  'N',
+  'O',
+  'P',
+  'Q',
+  'R',
+  'S',
+  'T',
+  'U',
+  'V',
+  'W',
+  'X',
+  'Y',
+  'Z',
 ];
 
 const List<String> _numbers = [
-  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+  '0',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
 ];
 
 const List<String> _punctuation = ['.', ',', '?', '/'];
@@ -31,7 +63,7 @@ extension CharacterSetTypeLabel on CharacterSetType {
   String get label => switch (this) {
     CharacterSetType.letters => 'A-Z',
     CharacterSetType.numbers => '0-9',
-    CharacterSetType.punctuation => 'Pun',
+    CharacterSetType.punctuation => 'Punct',
     CharacterSetType.words => 'Word',
   };
 }

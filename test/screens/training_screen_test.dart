@@ -8,6 +8,7 @@ import 'package:morse_icr/screens/settings_screen.dart';
 import 'package:morse_icr/screens/training_screen.dart';
 import 'package:morse_icr/speech/answer_speaker.dart';
 import 'package:morse_icr/speech/response_listener.dart';
+import 'package:morse_icr/training/problem_character_store.dart';
 import 'package:morse_icr/training/training_engine.dart';
 
 /// Locates the [SettingsScreen] pushed by tapping the app bar's
@@ -94,6 +95,20 @@ class _FakeResponseListener implements ResponseListener {
   }
 }
 
+/// An in-memory store so Focus-button tests never touch the real
+/// [FileProblemCharacterStore]'s platform-backed `path_provider` calls.
+class _FakeProblemCharacterStore implements ProblemCharacterStore {
+  List<String>? saved;
+
+  @override
+  Future<List<String>?> load() async => saved;
+
+  @override
+  Future<void> save(List<String> characters) async {
+    saved = characters;
+  }
+}
+
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
 
@@ -102,11 +117,14 @@ void main() {
   Widget wrapTraining({
     AnswerSpeaker? answerSpeaker,
     ResponseListener? responseListener,
+    ProblemCharacterStore? problemCharacterStore,
   }) => wrap(
     TrainingScreen(
       trainingEngine: TrainingEngine(turnPlayer: _FakeTurnPlayer()),
       answerSpeaker: answerSpeaker ?? _FakeSpeaker(),
       responseListener: responseListener ?? _FakeResponseListener(),
+      problemCharacterStore:
+          problemCharacterStore ?? _FakeProblemCharacterStore(),
       headphonesConnectedCheck: () async => true,
       reconfigureAudioSessionOnStart: () async {},
       activateAudioSessionOnStart: () async {},
@@ -270,7 +288,7 @@ void main() {
       ),
     );
 
-    final labels = ['A-Z', '0-9', 'Pun', 'Word'];
+    final labels = ['A-Z', '0-9', 'Punct', 'Word'];
     final tops = <double>[];
     for (final label in labels) {
       expect(find.text(label), findsOneWidget);
@@ -653,4 +671,99 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets(
+    'opens the Problem Character keyboard from the Focus button, and the '
+    'set entered there becomes the active training set',
+    (tester) async {
+      await tester.pumpWidget(wrapTraining());
+
+      expect(find.text('Focus (none)'), findsOneWidget);
+      await tester.ensureVisible(find.text('Focus (none)'));
+      await tester.tap(find.text('Focus (none)'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilterChip, 'K'));
+      await tester.tap(find.widgetWithText(FilterChip, 'R'));
+      await tester.pump();
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Focus (2 active)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'selecting a character-set chip clears an active problem-character set',
+    (tester) async {
+      final store = _FakeProblemCharacterStore()..saved = ['K', 'R'];
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+
+      await tester.ensureVisible(find.text('Focus (none)'));
+      await tester.tap(find.text('Focus (none)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.text('Focus (2 active)'), findsOneWidget);
+
+      await tester.tap(find.text('A-Z')); // deselect the only active chip
+      await tester.pump();
+      await tester.tap(find.text('A-Z')); // reselect it
+      await tester.pump();
+
+      expect(find.text('Focus (none)'), findsOneWidget);
+      expect(find.text('Focus (2 active)'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Clear-then-Done in the Problem Character keyboard deactivates the '
+    'problem-character set entirely, not just within that keyboard',
+    (tester) async {
+      final store = _FakeProblemCharacterStore()..saved = ['K', 'R'];
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+      await tester.pump(); // let cold-launch activation settle
+      expect(find.text('Focus (2 active)'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Focus (2 active)'));
+      await tester.tap(find.text('Focus (2 active)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clear'));
+      await tester.pump();
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Focus (none)'), findsOneWidget);
+      expect(find.text('Focus (2 active)'), findsNothing);
+      expect(store.saved, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'a previously-saved problem-character set is active from cold launch, '
+    'not just for the rest of the session it was entered in',
+    (tester) async {
+      final store = _FakeProblemCharacterStore()..saved = ['K', 'R', 'F'];
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+      await tester.pump();
+
+      expect(find.text('Focus (3 active)'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Focus button is disabled while training', (tester) async {
+    await tester.pumpWidget(wrapTraining());
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+
+    final button = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Focus (none)'),
+    );
+    expect(button.onPressed, isNull);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+  });
 }

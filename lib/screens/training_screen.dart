@@ -13,7 +13,10 @@ import '../speech/response_listener.dart';
 import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
 import '../training/character_set.dart';
+import '../training/file_problem_character_store.dart';
+import '../training/problem_character_store.dart';
 import '../training/training_engine.dart';
+import 'problem_character_keyboard.dart';
 import 'settings_screen.dart';
 import 'widgets/stepped_int_control.dart';
 
@@ -45,6 +48,7 @@ class TrainingScreen extends StatefulWidget {
     TrainingEngine? trainingEngine,
     AnswerSpeaker? answerSpeaker,
     ResponseListener? responseListener,
+    ProblemCharacterStore? problemCharacterStore,
     Future<bool> Function() headphonesConnectedCheck = hasNonSpeakerAudioOutput,
     Future<void> Function() reconfigureAudioSessionOnStart =
         configureAudioSession,
@@ -54,6 +58,7 @@ class TrainingScreen extends StatefulWidget {
   }) : _injectedTrainingEngine = trainingEngine,
        _injectedAnswerSpeaker = answerSpeaker,
        _injectedResponseListener = responseListener,
+       _injectedProblemCharacterStore = problemCharacterStore,
        _headphonesConnectedCheck = headphonesConnectedCheck,
        _reconfigureAudioSessionOnStart = reconfigureAudioSessionOnStart,
        _activateAudioSessionOnStart = activateAudioSessionOnStart,
@@ -62,6 +67,7 @@ class TrainingScreen extends StatefulWidget {
   final TrainingEngine? _injectedTrainingEngine;
   final AnswerSpeaker? _injectedAnswerSpeaker;
   final ResponseListener? _injectedResponseListener;
+  final ProblemCharacterStore? _injectedProblemCharacterStore;
   final Future<bool> Function() _headphonesConnectedCheck;
   final Future<void> Function() _reconfigureAudioSessionOnStart;
   final Future<void> Function() _activateAudioSessionOnStart;
@@ -79,6 +85,15 @@ class _TrainingScreenState extends State<TrainingScreen>
   final Set<CharacterSetType> _selectedCharacterSets = {
     CharacterSetType.letters,
   };
+  // Non-null means a problem-character set (morse_icr_spec.md sections
+  // 11, 12, 39) is the active training set, in place of whatever
+  // [_selectedCharacterSets] chips are checked -- set once Done is
+  // tapped in [ProblemCharacterKeyboard], or on cold launch if one was
+  // already persisted (see [initState]), and cleared the moment the
+  // learner taps any character-set chip again (section 39: "remains
+  // active until the user selects a different character set or edits
+  // the problem-character list").
+  List<String>? _problemCharacters;
   bool _isTraining = false;
   // Not shown in the UI -- tracked ahead of session logging
   // (Milestone 10), which will need a played-character count.
@@ -93,6 +108,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   late final TrainingEngine _trainingEngine;
   late final AnswerSpeaker _answerSpeaker;
   late final ResponseListener _responseListener;
+  late final ProblemCharacterStore _problemCharacterStore;
 
   @override
   void initState() {
@@ -109,6 +125,19 @@ class _TrainingScreenState extends State<TrainingScreen>
     }
     _responseListener =
         widget._injectedResponseListener ?? SpeechToTextResponseListener();
+    _problemCharacterStore =
+        widget._injectedProblemCharacterStore ?? FileProblemCharacterStore();
+    // Reflects a previously-saved problem-character set as the active
+    // training set right from cold launch, not just for the rest of the
+    // session it was entered in -- on-device testing showed a set that
+    // silently reverted to "not active" (with no on-screen indication
+    // why) after a force-quit, despite the underlying list itself having
+    // correctly persisted, read as a bug rather than the intended
+    // behavior.
+    _problemCharacterStore.load().then((characters) {
+      if (!mounted || characters == null || characters.isEmpty) return;
+      setState(() => _problemCharacters = characters);
+    });
     final answerSpeaker = _answerSpeaker;
     if (answerSpeaker is TtsAnswerSpeaker) {
       // Pre-rendering every character's spoken word (section 36) takes
@@ -317,7 +346,7 @@ class _TrainingScreenState extends State<TrainingScreen>
     }
 
     logDebug('start: tapped');
-    final characters = charactersForSelection(_selectedCharacterSets);
+    final characters = _activeCharacters;
     if (characters.isEmpty) return;
 
     if (_recognitionEnabled && !await widget._headphonesConnectedCheck()) {
@@ -387,8 +416,28 @@ class _TrainingScreenState extends State<TrainingScreen>
     );
   }
 
-  bool get _hasSelectedCharacters =>
-      charactersForSelection(_selectedCharacterSets).isNotEmpty;
+  // The problem-character set, when active, entirely replaces the
+  // character-set chips (morse_icr_spec.md section 39) -- not merged
+  // with them.
+  List<String> get _activeCharacters =>
+      _problemCharacters ?? charactersForSelection(_selectedCharacterSets);
+
+  bool get _hasSelectedCharacters => _activeCharacters.isNotEmpty;
+
+  Future<void> _openProblemCharacterKeyboard() async {
+    final characters = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(
+        builder: (_) => ProblemCharacterKeyboard(store: _problemCharacterStore),
+      ),
+    );
+    // Null means the learner backed out without ever tapping Done --
+    // leave whatever training set was already active alone. An empty
+    // (non-null) list means Done was tapped after Clear: an explicit
+    // request to deactivate the problem-character set entirely, back to
+    // whatever the character-set chips are checked.
+    if (characters == null || !mounted) return;
+    setState(() => _problemCharacters = characters.isEmpty ? null : characters);
+  }
 
   // Speech Recognition requires headphones (see [hasNonSpeakerAudioOutput]
   // for why) -- surfaced here rather than failing silently into the
@@ -528,12 +577,42 @@ class _TrainingScreenState extends State<TrainingScreen>
                                     } else {
                                       _selectedCharacterSets.remove(type);
                                     }
+                                    // Selecting a chip at all -- even
+                                    // just deselecting one -- supersedes
+                                    // an active problem-character set
+                                    // (morse_icr_spec.md section 39).
+                                    _problemCharacters = null;
                                   });
                                 },
                         ),
                     ],
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 12),
+                  Center(
+                    child: OutlinedButton(
+                      // Matches the character-set FilterChips' own
+                      // rounded-rectangle shape (Material 3's default
+                      // chip shape: an 8.0 circular border radius)
+                      // rather than OutlinedButton's default pill/
+                      // stadium shape, for visual consistency between
+                      // the two character-set-selection controls on
+                      // this screen.
+                      style: OutlinedButton.styleFrom(
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(8)),
+                        ),
+                      ),
+                      onPressed: _isTraining
+                          ? null
+                          : _openProblemCharacterKeyboard,
+                      child: Text(
+                        _problemCharacters == null
+                            ? 'Focus (none)'
+                            : 'Focus (${_problemCharacters!.length} active)',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                   Text(
                     _isTraining ? 'Training…' : 'Idle',
                     textAlign: TextAlign.center,
