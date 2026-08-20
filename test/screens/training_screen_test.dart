@@ -35,6 +35,7 @@ class _FakeTurnPlayer extends TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) async {
     final seconds = morseElementsForCharacter(
       character,

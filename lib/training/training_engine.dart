@@ -36,6 +36,7 @@ class TrainingEngine {
   Timer? _timer;
   double _wpm = 0;
   Duration _recognitionTime = Duration.zero;
+  Duration _extraGap = Duration.zero;
 
   String? _awaitingResponseFor;
   String? _respondedTo;
@@ -116,11 +117,16 @@ class TrainingEngine {
 
   /// Starts generating and playing characters from [characters] at
   /// [wpm], with [recognitionTime] of silence baked into each one's
-  /// turn, until [stop] is called. No-op if already running.
+  /// turn and [extraGap] of additional silence leading it (the "Extra
+  /// Gap" control, deliberately separate from recognition time -- see
+  /// [_runLoop]'s prepare-ahead comment for why it leads the *next*
+  /// turn's own buffer rather than trailing this one's), until [stop] is
+  /// called. No-op if already running.
   void start({
     required List<String> characters,
     required double wpm,
     required Duration recognitionTime,
+    Duration extraGap = Duration.zero,
   }) {
     if (_running) return;
     if (characters.isEmpty) {
@@ -128,19 +134,25 @@ class TrainingEngine {
     }
     _wpm = wpm;
     _recognitionTime = recognitionTime;
+    _extraGap = extraGap;
     _running = true;
     _loopFuture = _runLoop(characters);
   }
 
-  /// Changes the character speed and/or recognition time used by turns
-  /// generated from now on. The learner may adjust these live while
-  /// training is running (they are not locked the way Personal Character
-  /// Speed is once training is under way per morse_icr_spec.md section
-  /// 17) -- a change never interrupts a turn already in progress, only
-  /// ones not yet started.
-  void updateSettings({double? wpm, Duration? recognitionTime}) {
+  /// Changes the character speed, recognition time, and/or extra gap
+  /// used by turns generated from now on. The learner may adjust these
+  /// live while training is running (they are not locked the way
+  /// Personal Character Speed is once training is under way per
+  /// morse_icr_spec.md section 17) -- a change never interrupts a turn
+  /// already in progress, only ones not yet started.
+  void updateSettings({
+    double? wpm,
+    Duration? recognitionTime,
+    Duration? extraGap,
+  }) {
     if (wpm != null) _wpm = wpm;
     if (recognitionTime != null) _recognitionTime = recognitionTime;
+    if (extraGap != null) _extraGap = extraGap;
   }
 
   /// Stops the loop and waits for it to fully exit, interrupting any
@@ -207,6 +219,7 @@ class TrainingEngine {
     double? preparedWpm;
     Duration? preparedRecognitionTime;
     bool? preparedIncludeAnswer;
+    Duration? preparedExtraGap;
     Future<void>? prepareFuture;
 
     while (_running) {
@@ -233,6 +246,7 @@ class TrainingEngine {
       final double wpm;
       final Duration recognitionTime;
       final bool includeAnswer;
+      final Duration extraGap;
       TurnTiming? timing;
 
       if (preparedCharacter != null) {
@@ -240,10 +254,12 @@ class TrainingEngine {
         wpm = preparedWpm!;
         recognitionTime = preparedRecognitionTime!;
         includeAnswer = preparedIncludeAnswer!;
+        extraGap = preparedExtraGap!;
         preparedCharacter = null;
         preparedWpm = null;
         preparedRecognitionTime = null;
         preparedIncludeAnswer = null;
+        preparedExtraGap = null;
         logDebug('generated: $character');
         onCharacterGenerated?.call(character);
         try {
@@ -261,6 +277,7 @@ class TrainingEngine {
               wpm,
               recognitionTime,
               includeAnswer: includeAnswer,
+              extraGap: extraGap,
             );
           } catch (e) {
             logDebug('playTurn($character) failed: $e');
@@ -268,13 +285,14 @@ class TrainingEngine {
         }
       } else {
         character = _selector.next(characters);
-        // Freeze this turn's own speed, recognition time, and voice
-        // setting, even if [updateSettings] or [isVoiceEnabled] change
-        // before it finishes -- only the *next* turn should reflect a
-        // live change.
+        // Freeze this turn's own speed, recognition time, extra gap, and
+        // voice setting, even if [updateSettings] or [isVoiceEnabled]
+        // change before it finishes -- only the *next* turn should
+        // reflect a live change.
         wpm = _wpm;
         recognitionTime = _recognitionTime;
         includeAnswer = isVoiceEnabled?.call() ?? true;
+        extraGap = _extraGap;
         logDebug('generated: $character');
         onCharacterGenerated?.call(character);
         try {
@@ -283,6 +301,7 @@ class TrainingEngine {
             wpm,
             recognitionTime,
             includeAnswer: includeAnswer,
+            extraGap: extraGap,
           );
         } catch (e) {
           // A playback failure shouldn't kill the training loop -- audio
@@ -336,18 +355,21 @@ class TrainingEngine {
       final upcomingWpm = _wpm;
       final upcomingRecognitionTime = _recognitionTime;
       final upcomingIncludeAnswer = isVoiceEnabled?.call() ?? true;
+      final upcomingExtraGap = _extraGap;
       prepareFuture = _turnPlayer
           .prepareTurn(
             upcoming,
             upcomingWpm,
             upcomingRecognitionTime,
             includeAnswer: upcomingIncludeAnswer,
+            extraGap: upcomingExtraGap,
           )
           .then((_) {
             preparedCharacter = upcoming;
             preparedWpm = upcomingWpm;
             preparedRecognitionTime = upcomingRecognitionTime;
             preparedIncludeAnswer = upcomingIncludeAnswer;
+            preparedExtraGap = upcomingExtraGap;
           })
           .catchError((Object e) {
             logDebug('prepareTurn($upcoming) failed: $e');

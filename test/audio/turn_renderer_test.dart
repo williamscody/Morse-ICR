@@ -74,5 +74,42 @@ void main() {
       final samples = readPcm16Samples(rendered.wavBytes);
       expect(samples, [1, 2, 3, 4, 5]);
     });
+
+    test('extraGap bakes leading silence before the Morse tone, shifting '
+        'every offset out by the same amount', () {
+      const sampleRate = 44100;
+      final morseSamples = Int16List(441); // 10ms
+      final answerSamples = Int16List(882); // 20ms
+      const recognitionTime = Duration(milliseconds: 50);
+      const extraGap = Duration(milliseconds: 30); // 1323 samples
+
+      final rendered = renderTurn(
+        morseSamples: morseSamples,
+        recognitionTime: recognitionTime,
+        answerSamples: answerSamples,
+        extraGap: extraGap,
+        sampleRate: sampleRate,
+      );
+
+      final samples = readPcm16Samples(rendered.wavBytes);
+      expect(samples.length, 1323 + 441 + 2205 + 882);
+      expect(samples.sublist(0, 1323), everyElement(0));
+      expect(rendered.timing.morseEnd, const Duration(milliseconds: 40));
+      expect(rendered.timing.answerStart, const Duration(milliseconds: 90));
+      expect(rendered.timing.totalDuration, const Duration(milliseconds: 110));
+    });
+
+    test('an unset extraGap defaults to no leading silence at all', () {
+      final morseSamples = Int16List.fromList([1, 2, 3]);
+
+      final rendered = renderTurn(
+        morseSamples: morseSamples,
+        recognitionTime: Duration.zero,
+        sampleRate: 44100,
+      );
+
+      final samples = readPcm16Samples(rendered.wavBytes);
+      expect(samples, [1, 2, 3]);
+    });
   });
 }

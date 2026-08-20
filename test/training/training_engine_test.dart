@@ -16,12 +16,18 @@ Duration _characterDuration(String character, double wpm) {
 }
 
 /// The [TurnTiming] a real [TurnAudioEngine] would produce for
-/// [character] at [wpm] with [recognitionTime] of silence and no cached
-/// answer -- fakes below use this so submitResponse's "beat the
-/// computer" window and the loop's own pacing behave exactly as they
-/// would against real Morse timing, without needing real audio.
-TurnTiming _timingFor(String character, double wpm, Duration recognitionTime) {
-  final morseEnd = _characterDuration(character, wpm);
+/// [character] at [wpm] with [recognitionTime] of silence, [extraGap] of
+/// leading silence, and no cached answer -- fakes below use this so
+/// submitResponse's "beat the computer" window and the loop's own pacing
+/// behave exactly as they would against real Morse timing, without
+/// needing real audio.
+TurnTiming _timingFor(
+  String character,
+  double wpm,
+  Duration recognitionTime, {
+  Duration extraGap = Duration.zero,
+}) {
+  final morseEnd = extraGap + _characterDuration(character, wpm);
   final answerStart = morseEnd + recognitionTime;
   return TurnTiming(
     morseEnd: morseEnd,
@@ -200,6 +206,27 @@ void main() {
       await engine.stop();
 
       expect(fastCount, greaterThan(player.played.length));
+    });
+
+    test('updateSettings changes extraGap for the gap between characters '
+        'generated afterward, same as recognitionTime', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 5),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      final noGapCount = player.played.length;
+
+      engine.updateSettings(extraGap: const Duration(milliseconds: 200));
+      player.played.clear();
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      await engine.stop();
+
+      expect(noGapCount, greaterThan(player.played.length));
     });
 
     test('onRecognitionTimeout fires once per character once its recognition '
@@ -590,10 +617,11 @@ class _RecordingPlayer extends TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) async {
     played.add(character);
     wpms.add(wpm);
-    return _timingFor(character, wpm, recognitionTime);
+    return _timingFor(character, wpm, recognitionTime, extraGap: extraGap);
   }
 }
 
@@ -606,6 +634,7 @@ class _ThrowingPlayer extends TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) async {
     callCount++;
     throw Exception('playback failed');
@@ -632,6 +661,7 @@ class _PrefetchingPlayer extends TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) async {
     if (prepareDelay > Duration.zero) {
       await Future<void>.delayed(prepareDelay);
@@ -659,6 +689,7 @@ class _PrefetchingPlayer extends TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) async {
     playedCold.add(character);
     return _timingFor(character, wpm, recognitionTime);

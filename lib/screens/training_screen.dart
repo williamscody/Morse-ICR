@@ -17,16 +17,16 @@ import '../training/training_engine.dart';
 import 'settings_screen.dart';
 import 'widgets/stepped_int_control.dart';
 
-/// Milestone 8: the training screen wired to the character-generation
-/// loop, recognition timer, computer-voice answer, and the learner's
-/// own spoken response.
+/// The training screen wired to the character-generation loop,
+/// recognition timer, computer-voice answer, and the learner's own
+/// spoken response.
 ///
 /// Provides character-speed control, recognition-time control,
 /// character-set selection, and a start/stop toggle that drives
 /// [TrainingEngine], which announces each character via [AnswerSpeaker]
 /// once its recognition deadline lapses, unless [ResponseListener]
 /// recognizes the learner saying it first. Nothing yet scores a
-/// response (Milestone 9); persistence is still Milestone 12.
+/// response (Milestone 14); persistence is still Milestone 10.
 class TrainingScreen extends StatefulWidget {
   /// [trainingEngine], [answerSpeaker], and [responseListener] let tests
   /// substitute fakes so they don't have to exercise the real
@@ -75,12 +75,13 @@ class _TrainingScreenState extends State<TrainingScreen>
     with WidgetsBindingObserver {
   int _wpm = 90;
   int _recognitionTimeMs = 500;
+  int _extraGapMs = 0;
   final Set<CharacterSetType> _selectedCharacterSets = {
     CharacterSetType.letters,
   };
   bool _isTraining = false;
   // Not shown in the UI -- tracked ahead of session logging
-  // (Milestone 12), which will need a played-character count.
+  // (Milestone 10), which will need a played-character count.
   int _charactersPlayed = 0;
   bool _voiceEnabled = true;
   bool _voicePreparing = false;
@@ -137,7 +138,7 @@ class _TrainingScreenState extends State<TrainingScreen>
     // mid-session takes effect starting the next character, the same
     // "never interrupts a turn already in progress" rule speed and
     // recognition-time changes already follow. Scoring the response is
-    // out of scope until Milestone 9.
+    // out of scope until Milestone 14.
     //
     // No muting around this: [SpeechToTextResponseListener] keeps the
     // mic listening continuously through the computer's own
@@ -159,7 +160,7 @@ class _TrainingScreenState extends State<TrainingScreen>
     // pre-mix architecture).
     _trainingEngine.onRecognitionTimeout = _answerSpeaker.speak;
     // A simple green-dot indicator that the learner's spoken response
-    // was recognized -- not scoring (Milestone 9), just visible
+    // was recognized -- not scoring (Milestone 14), just visible
     // confirmation that recognition is doing something, since the
     // character itself is never shown (section 24).
     _trainingEngine.onCorrectResponse = (character) {
@@ -382,6 +383,7 @@ class _TrainingScreenState extends State<TrainingScreen>
       characters: characters,
       wpm: _wpm.toDouble(),
       recognitionTime: Duration(milliseconds: _recognitionTimeMs),
+      extraGap: Duration(milliseconds: _extraGapMs),
     );
   }
 
@@ -483,6 +485,21 @@ class _TrainingScreenState extends State<TrainingScreen>
                       setState(() => _recognitionTimeMs = v);
                       _trainingEngine.updateSettings(
                         recognitionTime: Duration(milliseconds: v),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                  SteppedIntControl(
+                    label: 'Extra Gap',
+                    value: _extraGapMs,
+                    min: 0,
+                    max: 1000,
+                    step: 1,
+                    suffix: 'ms',
+                    onChanged: (v) {
+                      setState(() => _extraGapMs = v);
+                      _trainingEngine.updateSettings(
+                        extraGap: Duration(milliseconds: v),
                       );
                     },
                   ),

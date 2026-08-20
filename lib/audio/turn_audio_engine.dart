@@ -77,11 +77,19 @@ class TurnAudioEngine implements TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) {
     final issued = Completer<TurnTiming>();
     unawaited(
       _enqueue(
-        () => _playTurn(character, wpm, recognitionTime, includeAnswer, issued),
+        () => _playTurn(
+          character,
+          wpm,
+          recognitionTime,
+          includeAnswer,
+          extraGap,
+          issued,
+        ),
       ).catchError((Object e) {
         if (!issued.isCompleted) issued.completeError(e);
         logDebug('playTurn($character) failed: $e');
@@ -114,6 +122,7 @@ class TurnAudioEngine implements TurnPlayer {
     double wpm,
     Duration recognitionTime,
     bool includeAnswer,
+    Duration extraGap,
     Completer<TurnTiming> issued,
   ) async {
     final rendered = _renderTurn(
@@ -121,6 +130,7 @@ class TurnAudioEngine implements TurnPlayer {
       wpm,
       recognitionTime,
       includeAnswer,
+      extraGap,
     );
     // just_audio's native iOS setAudioSource() (AudioPlayer.m's load:)
     // auto-starts the newly loaded source immediately if its own
@@ -157,9 +167,16 @@ class TurnAudioEngine implements TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) {
     return _enqueue(
-      () => _prepareTurn(character, wpm, recognitionTime, includeAnswer),
+      () => _prepareTurn(
+        character,
+        wpm,
+        recognitionTime,
+        includeAnswer,
+        extraGap,
+      ),
     );
   }
 
@@ -168,12 +185,14 @@ class TurnAudioEngine implements TurnPlayer {
     double wpm,
     Duration recognitionTime,
     bool includeAnswer,
+    Duration extraGap,
   ) async {
     final rendered = _renderTurn(
       character,
       wpm,
       recognitionTime,
       includeAnswer,
+      extraGap,
     );
     final player = _player;
     // See _playTurn's matching comment -- without pausing first,
@@ -266,6 +285,7 @@ class TurnAudioEngine implements TurnPlayer {
     double wpm,
     Duration recognitionTime,
     bool includeAnswer,
+    Duration extraGap,
   ) {
     final morseSamples = synthesizer.renderSamples(
       morseElementsForCharacter(character, wpm),
@@ -277,6 +297,7 @@ class TurnAudioEngine implements TurnPlayer {
       morseSamples: morseSamples,
       recognitionTime: recognitionTime,
       answerSamples: answerSamples,
+      extraGap: extraGap,
       sampleRate: _sampleRate,
     );
   }

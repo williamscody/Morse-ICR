@@ -45,13 +45,15 @@ class TurnTiming {
 /// audio/timing engine should be testable independently).
 abstract class TurnPlayer {
   /// Renders [character]'s turn at [wpm] with [recognitionTime] of
-  /// baked-in silence, including the spoken answer if [includeAnswer] is
-  /// true and one is cached, and plays it.
+  /// baked-in silence and [extraGap] of additional silence leading the
+  /// turn, including the spoken answer if [includeAnswer] is true and
+  /// one is cached, and plays it.
   Future<TurnTiming> playTurn(
     String character,
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   });
 
   /// Renders [character]'s turn ahead of time, without starting
@@ -65,6 +67,7 @@ abstract class TurnPlayer {
     double wpm,
     Duration recognitionTime, {
     required bool includeAnswer,
+    required Duration extraGap,
   }) async {}
 
   /// Plays whatever [prepareTurn] most recently rendered, if it's still
