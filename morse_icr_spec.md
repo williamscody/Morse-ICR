@@ -935,39 +935,39 @@ Computer speech announcement.
 
 ### Milestone 8
 
-Microphone/speech recognition.
+Manual user entry of problem characters (sections 11, 12, 39): a "Prob" button on the training screen opens a custom keyboard (A-Z, 0-9, and common punctuation) for entering the problem-character set; the next session started trains only those characters.
 
 ### Milestone 9
 
-Beat-the-computer scoring.
+Three-session training cycle and persistent countdown timers.
 
 ### Milestone 10
 
-Character-level statistics.
+Persistent training log, cumulative training time, and session notes.
 
 ### Milestone 11
 
-Three-session training cycle and persistent countdown timers.
+Problem-character training.
 
 ### Milestone 12
 
-Persistent training log, cumulative training time, and session notes.
+Settings screen (section 35): Speak "." as Period/Dot, Speak "/" as Slash/Stroke, Morse pitch, Morse volume, Voice volume -- all persisted per section 23.
 
 ### Milestone 13
 
-Personal character-speed discovery.
+On-device, enrollment-based speech recognition (section 38), as a candidate replacement for the general-purpose speech-recognition engine implemented earlier (`package:speech_to_text`, section 27).
 
 ### Milestone 14
 
-Problem-character training.
+Beat-the-computer scoring. Sequenced after Milestone 13 since scoring ingests data from whichever speech-recognition engine is in use, and Milestone 13 is expected to be the one actually relied on.
 
 ### Milestone 15
 
-Settings screen (section 35): Speak "." as Period/Dot, Speak "/" as Slash/Stroke, Morse pitch, Morse volume, Voice volume -- all persisted per section 23.
+Character-level statistics. Sequenced after Milestone 13 for the same reason as Milestone 14.
 
-### Milestone 16
+### Milestone 16 (experimental)
 
-On-device, enrollment-based speech recognition (section 38), as a candidate replacement for the general-purpose speech-recognition engine established in Milestone 8.
+Personal character-speed discovery.
 
 Do not implement everything at once.
 
@@ -1111,7 +1111,7 @@ Per section 32's dependency-justification requirement:
 
 # 38. On-Device, Enrollment-Based Speech Recognition
 
-Milestone 8's speech recognition (section 27) uses a general-purpose, open-vocabulary engine (`package:speech_to_text`). That engine's job -- transcribing arbitrary spoken language -- is much harder than what this application actually needs, and on-device testing surfaced real costs from that mismatch: 700ms-1.5s recognition latency, and no usable per-result confidence signal (on-device recognition reports 0 confidence rather than a real score).
+The speech recognition implemented for this application (section 27) uses a general-purpose, open-vocabulary engine (`package:speech_to_text`). That engine's job -- transcribing arbitrary spoken language -- is much harder than what this application actually needs, and on-device testing surfaced real costs from that mismatch: 700ms-1.5s recognition latency, and no usable per-result confidence signal (on-device recognition reports 0 confidence rather than a real score).
 
 This application only ever needs to recognize one spoken character at a time, from a small, fixed, already-enumerated vocabulary: the letters and digits (section 15), plus the punctuation characters and their spoken-name variants (sections 14, 35). That is a **closed-set isolated-word classification** problem, not open-vocabulary transcription -- the same category as wake-word detection or old touch-tone-replacement digit recognizers, and a substantially lighter computational load than general ASR.
 
@@ -1129,10 +1129,36 @@ At recognition time, a newly heard short utterance is compared against the enrol
 
 The specific matching technique (e.g. dynamic time warping over MFCC/mel-spectrogram features, versus a small trained classifier) needs investigation and testing, the same way section 27 already flags for the general-purpose engine. A pure-Dart template-matching approach is worth trying first, per section 32's preference for avoiding unnecessary dependencies -- it would need no TFLite/Core ML/native ML dependency at all. Whether that reaches usable accuracy, or a small on-device model is needed instead, is an open question for implementation to answer.
 
-## Relationship to Milestone 8
+## Relationship to the existing speech-recognition engine
 
-This does not replace [`ResponseListener`](section 27's architecture requirement that the speech-recognition implementation be swappable) -- it's a second implementation behind the same interface, so it can be developed, tested, and compared against the existing general-purpose engine without disturbing `TrainingEngine` or the rest of the training loop. Whether it fully replaces Milestone 8's engine, or becomes a selectable alternative, is a product decision for after it's built and measured.
+This does not replace [`ResponseListener`](section 27's architecture requirement that the speech-recognition implementation be swappable) -- it's a second implementation behind the same interface, so it can be developed, tested, and compared against the existing general-purpose engine without disturbing `TrainingEngine` or the rest of the training loop. Whether it fully replaces the existing engine, or becomes a selectable alternative, is a product decision for after it's built and measured.
 
-This does **not** address the unrelated acoustic self-echo problem (section 27/37: the phone's own microphone re-hearing its own spoken answer through open air) -- that is a property of simultaneous playback and recording on a phone speaker, independent of which recognizer is listening. The headphone requirement established for Milestone 8 remains necessary regardless of which recognition engine is in use.
+This does **not** address the unrelated acoustic self-echo problem (section 27/37: the phone's own microphone re-hearing its own spoken answer through open air) -- that is a property of simultaneous playback and recording on a phone speaker, independent of which recognizer is listening. The headphone requirement established alongside the existing engine (section 27) remains necessary regardless of which recognition engine is in use.
+
+# 39. Problem-Character Entry Flow
+
+Gives sections 11 (Problem Characters) and 12 (Problem Character Keyboard) a concrete entry point and flow, ahead of -- and independent of -- the full three-session training cycle (section 8) and character-level statistics (section 20), neither of which this depends on.
+
+## Entry point
+
+A "Prob" button on the main training screen opens the problem-character entry interface.
+
+## Character keyboard
+
+Per section 12, presents the common Morse character set in one view rather than requiring the standard device keyboard. At minimum:
+
+- A-Z
+- 0-9
+- `/` `.` `,` `?`
+
+Per section 12, additional common Morse punctuation may also be included; the above is the required minimum.
+
+## Flow
+
+1. The user taps characters to add or remove them from the problem-character set (section 12's one-tap toggle behavior, with a visual indication of what's currently selected).
+2. The user taps Done to close the keyboard. The entered set is persisted (section 11).
+3. The next training session the user starts trains only the entered problem-character set, in place of whatever character set was previously selected.
+
+This does not yet integrate with the three-session training cycle (section 8, Session B) -- that integration is future work, once the three-session cycle itself is built (Development Strategy, Milestone 9). Until then, entering a problem-character list and tapping Done simply makes it the active training set for the next Start, the same way selecting a character-set chip does today, and it remains active until the user selects a different character set or edits the problem-character list.
 
 # End of Specification
