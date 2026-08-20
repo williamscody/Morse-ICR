@@ -74,9 +74,9 @@ class TrainingEngine {
   /// [onRecognitionTimeout]'s live fallback) regardless, since speech-
   /// recognition accuracy is still being verified and Bill wants the
   /// voice kept on for debugging until a future settings toggle exists
-  /// for it. Scoring/statistics (Milestone 9) and problem-character
-  /// capture (Milestone 14) aren't wired up yet either; this only exists
-  /// so later work can hook in without further changes here.
+  /// for it. Scoring/statistics (Milestones 14 and 15) and problem-
+  /// character capture (Milestone 11) aren't wired up yet either; this
+  /// only exists so later work can hook in without further changes here.
   void Function(String character)? onCorrectResponse;
 
   /// Whether the computer should announce each character's answer at
@@ -158,6 +158,19 @@ class TrainingEngine {
     _windowOpenTimer = null;
     _windowCloseTimer?.cancel();
     _windowCloseTimer = null;
+    // Awaited, not fire-and-forget, and deliberately first: Stop is no
+    // longer only ever observed in the gap between turns (see
+    // TurnAudioEngine's playTurn/playPrepared comments), so a turn's own
+    // play() call can still be genuinely in progress right here.
+    // TrainingScreen deactivates the shared audio session immediately
+    // after this method returns -- doing that while playback is still
+    // actually in flight silently kills it without ever resolving that
+    // play() call's own Future, hanging it (and every operation the
+    // player's queue serializes behind it) forever. Confirmed on-device
+    // as the cause of Stop-then-Start wedging the app whenever a turn
+    // was long enough (e.g. 500ms+ recognition time) for this race to be
+    // reachable.
+    await _turnPlayer.stopPlayback();
     // TurnPlayer implementations that support preparing ahead (see
     // _runLoop) outlive any single session -- without this, a turn
     // prepared-but-not-yet-played when Stop lands stays loaded and

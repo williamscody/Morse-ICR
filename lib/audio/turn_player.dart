@@ -76,4 +76,16 @@ abstract class TurnPlayer {
   /// playing it. Implementations that don't support preparing ahead can
   /// leave this as the default no-op.
   Future<void> cancelPrepared() async {}
+
+  /// Immediately pauses whatever is currently playing. [TrainingEngine]
+  /// calls this as the first step of stopping a session, before the
+  /// caller goes on to tear down the shared audio session -- a turn's
+  /// own [playTurn]/[playPrepared] call can still be genuinely in
+  /// progress at that moment (Stop is no longer only ever observed in
+  /// the gap between turns), and deactivating the audio session out from
+  /// under still-in-flight playback can leave it hung forever rather
+  /// than resolving normally. Implementations that don't hold onto
+  /// in-flight playback between calls can leave this as the default
+  /// no-op.
+  Future<void> stopPlayback() async {}
 }

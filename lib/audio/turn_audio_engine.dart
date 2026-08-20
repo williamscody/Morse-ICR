@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:just_audio/just_audio.dart';
 
 import '../debug_log.dart';
@@ -76,16 +78,43 @@ class TurnAudioEngine implements TurnPlayer {
     Duration recognitionTime, {
     required bool includeAnswer,
   }) {
-    return _enqueue(
-      () => _playTurn(character, wpm, recognitionTime, includeAnswer),
+    final issued = Completer<TurnTiming>();
+    unawaited(
+      _enqueue(
+        () => _playTurn(character, wpm, recognitionTime, includeAnswer, issued),
+      ).catchError((Object e) {
+        if (!issued.isCompleted) issued.completeError(e);
+        logDebug('playTurn($character) failed: $e');
+      }),
     );
+    return issued.future;
   }
 
-  Future<TurnTiming> _playTurn(
+  // just_audio's play() Future does not resolve once playback *starts*
+  // -- confirmed against the bundled iOS plugin source (AudioPlayer.m's
+  // play: handler stashes the method call's FlutterResult and only
+  // invokes it later, from pause/complete/dispose or a superseding
+  // play() call) -- it resolves once playback *ends* or is interrupted.
+  // [TrainingEngine] paces its own loop and the "beat the computer"
+  // response-window Timers off of when a turn was *issued* to the
+  // player, not when its playback finishes, so [issued] completes as
+  // soon as play() has been called rather than once play() itself
+  // resolves (on-device testing found awaiting that resolution here was
+  // what turned a supposedly near-zero turn-to-turn handoff into a real,
+  // roughly-one-turn-length dead-air gap between packages -- doubling
+  // perceived character-to-character spacing, and delaying the window
+  // Timers until well after the audio they're meant to track had
+  // already finished playing). The enqueued operation itself still
+  // awaits play() to real completion below, though, so [_queue] doesn't
+  // let a subsequent [_prepareTurn] touch this same shared player
+  // (pause()+setAudioSource()) until this turn has actually finished
+  // playing.
+  Future<void> _playTurn(
     String character,
     double wpm,
     Duration recognitionTime,
     bool includeAnswer,
+    Completer<TurnTiming> issued,
   ) async {
     final rendered = _renderTurn(
       character,
@@ -106,17 +135,22 @@ class TurnAudioEngine implements TurnPlayer {
     _preparedPlayer = null;
     _preparedTiming = null;
     logDebug('playTurn($character): play()');
-    await _player.play();
-    logDebug('playTurn($character): play() returned');
-    return rendered.timing;
+    final playFuture = _player.play();
+    issued.complete(rendered.timing);
+    logDebug('playTurn($character): play() issued');
+    await playFuture;
+    logDebug('playTurn($character): play() completed');
   }
 
   /// Renders [character]'s turn ahead of time and loads it into the
   /// player without starting playback, so a later [playPrepared] call
-  /// only needs to call play(). Intended to run during the *current*
-  /// turn's playback, overlapping this call's own render and
-  /// setAudioSource() cost with time the learner is already listening
-  /// through.
+  /// only needs to call play(). Queued behind the current turn's own
+  /// play() call (see [_playTurn]'s matching comment on why that call
+  /// only resolves once real playback ends), so in practice this only
+  /// starts once the current turn has actually finished playing, not
+  /// while it's still audible -- both turns share one [AudioPlayer], so
+  /// starting this any earlier would mean pausing/reloading the source
+  /// still playing out to the learner.
   @override
   Future<void> prepareTurn(
     String character,
@@ -158,20 +192,36 @@ class TurnAudioEngine implements TurnPlayer {
 
   @override
   Future<TurnTiming?> playPrepared() {
-    return _enqueue(_playPrepared);
+    final issued = Completer<TurnTiming?>();
+    unawaited(
+      _enqueue(() => _playPrepared(issued)).catchError((Object e) {
+        if (!issued.isCompleted) issued.completeError(e);
+        logDebug('playPrepared() failed: $e');
+      }),
+    );
+    return issued.future;
   }
 
-  Future<TurnTiming?> _playPrepared() async {
+  // See _playTurn's matching comment -- [issued] completes as soon as
+  // play() has been called, not once its own Future resolves (which
+  // just_audio only does at end-of-playback), while the enqueued
+  // operation still awaits real completion so [_queue] keeps a
+  // subsequent [_prepareTurn] from touching the shared player until this
+  // turn has actually finished playing.
+  Future<void> _playPrepared(Completer<TurnTiming?> issued) async {
     if (!identical(_preparedPlayer, _player) || _preparedTiming == null) {
-      return null;
+      issued.complete(null);
+      return;
     }
     final timing = _preparedTiming!;
     _preparedPlayer = null;
     _preparedTiming = null;
     logDebug('playPrepared(): play()');
-    await _player.play();
-    logDebug('playPrepared(): play() returned');
-    return timing;
+    final playFuture = _player.play();
+    issued.complete(timing);
+    logDebug('playPrepared(): play() issued');
+    await playFuture;
+    logDebug('playPrepared(): play() completed');
   }
 
   /// Discards whatever [prepareTurn] most recently rendered, without
@@ -187,6 +237,29 @@ class TurnAudioEngine implements TurnPlayer {
       _preparedTiming = null;
     });
   }
+
+  // Deliberately bypasses [_enqueue]: this exists specifically to unstick
+  // an in-flight _playTurn/_playPrepared operation that [_queue] is
+  // currently blocked on (see [TurnPlayer.stopPlayback]'s doc comment),
+  // so it has to be able to reach the player directly rather than queue
+  // up behind the very operation it's meant to free. just_audio's
+  // pause() is what actually resolves that stuck operation's own play()
+  // Future (see _playTurn's comment on why play() doesn't resolve on its
+  // own until paused/completed/interrupted) -- confirmed on-device as
+  // the fix for Stop-then-Start silently wedging the app whenever Stop
+  // landed while a turn (long enough, e.g. 500ms+ recognition time) was
+  // still actually playing: TrainingScreen deactivates the shared
+  // AVAudioSession right after TrainingEngine.stop() returns, and doing
+  // that while a play() call was still genuinely in flight silently
+  // killed native playback without ever invoking just_audio's own
+  // pause/complete handlers, leaving that call's Future -- and every
+  // operation queued behind it -- hung forever. Safe to call when
+  // nothing is actually playing (pause() is a no-op on both the Dart and
+  // native side in that case), and safe to race against a concurrently-
+  // queued pause()/play() call, since both just idempotently toggle the
+  // same native playing state.
+  @override
+  Future<void> stopPlayback() => _player.pause();
 
   RenderedTurn _renderTurn(
     String character,
