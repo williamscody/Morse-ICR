@@ -744,6 +744,7 @@ class _TrainingScreenState extends State<TrainingScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Morse ICR'),
@@ -768,165 +769,232 @@ class _TrainingScreenState extends State<TrainingScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SteppedIntControl(
-                    label: 'Character Speed',
-                    value: _wpm,
-                    min: 15,
-                    max: 150,
-                    step: 1,
-                    suffix: 'WPM',
-                    onChanged: (v) {
-                      setState(() => _wpm = v);
-                      _trainingEngine.updateSettings(wpm: v.toDouble());
-                    },
+                  _SectionCard(
+                    title: 'Training Settings',
+                    child: Column(
+                      children: [
+                        SteppedIntControl(
+                          label: 'Character Speed',
+                          value: _wpm,
+                          min: 15,
+                          max: 150,
+                          step: 1,
+                          suffix: 'WPM',
+                          onChanged: (v) {
+                            setState(() => _wpm = v);
+                            _trainingEngine.updateSettings(wpm: v.toDouble());
+                          },
+                        ),
+                        const SizedBox(height: 24),
+                        SteppedIntControl(
+                          label: 'Recognition Time',
+                          value: _recognitionTimeMs,
+                          min: 50,
+                          max: 1000,
+                          step: 1,
+                          suffix: 'ms',
+                          onChanged: (v) {
+                            setState(() => _recognitionTimeMs = v);
+                            _trainingEngine.updateSettings(
+                              recognitionTime: Duration(milliseconds: v),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 24),
+                        SteppedIntControl(
+                          label: 'Extra Gap',
+                          value: _extraGapMs,
+                          min: 0,
+                          max: 1000,
+                          step: 1,
+                          suffix: 'ms',
+                          onChanged: (v) {
+                            setState(() => _extraGapMs = v);
+                            _trainingEngine.updateSettings(
+                              extraGap: Duration(milliseconds: v),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _SectionCard(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: _isTraining ? null : _openCountdownTimerSettings,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.timer_outlined,
+                              color: colorScheme.primary,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Timer',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const Spacer(),
+                            Text(
+                              _countdownDisplayText,
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
+                                    color: _countdownRemaining != null
+                                        ? colorScheme.primary
+                                        : null,
+                                    fontWeight: _countdownRemaining != null
+                                        ? FontWeight.bold
+                                        : null,
+                                  ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.chevron_right,
+                              color: _isTraining
+                                  ? Theme.of(context).disabledColor
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _SectionCard(
+                    title: 'Character Set',
+                    child: Column(
+                      children: [
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final type in CharacterSetType.values)
+                              FilterChip(
+                                label: Text(type.label),
+                                showCheckmark: false,
+                                selected: _selectedCharacterSets.contains(
+                                  type,
+                                ),
+                                selectedColor: colorScheme.primaryContainer,
+                                onSelected: _isTraining
+                                    ? null
+                                    : (selected) {
+                                        setState(() {
+                                          if (selected) {
+                                            _selectedCharacterSets.add(type);
+                                          } else {
+                                            _selectedCharacterSets.remove(
+                                              type,
+                                            );
+                                          }
+                                          // Selecting a chip at all --
+                                          // even just deselecting one --
+                                          // supersedes an active problem-
+                                          // character set (morse_icr_spec.md
+                                          // section 39).
+                                          _problemCharacters = null;
+                                        });
+                                      },
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Center(
+                          child: OutlinedButton(
+                            // Matches the character-set FilterChips' own
+                            // rounded-rectangle shape (Material 3's
+                            // default chip shape: an 8.0 circular border
+                            // radius) rather than OutlinedButton's
+                            // default pill/stadium shape, for visual
+                            // consistency between the two character-set-
+                            // selection controls on this screen.
+                            style: OutlinedButton.styleFrom(
+                              shape: const RoundedRectangleBorder(
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(8),
+                                ),
+                              ),
+                              foregroundColor: _problemCharacters != null
+                                  ? colorScheme.primary
+                                  : null,
+                              side: _problemCharacters != null
+                                  ? BorderSide(color: colorScheme.primary)
+                                  : null,
+                            ),
+                            onPressed: _isTraining
+                                ? null
+                                : _openProblemCharacterKeyboard,
+                            child: Text(
+                              _problemCharacters == null
+                                  ? 'Focus (none)'
+                                  : 'Focus (${_problemCharacters!.length} active)',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 24),
-                  SteppedIntControl(
-                    label: 'Recognition Time',
-                    value: _recognitionTimeMs,
-                    min: 50,
-                    max: 1000,
-                    step: 1,
-                    suffix: 'ms',
-                    onChanged: (v) {
-                      setState(() => _recognitionTimeMs = v);
-                      _trainingEngine.updateSettings(
-                        recognitionTime: Duration(milliseconds: v),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  SteppedIntControl(
-                    label: 'Extra Gap',
-                    value: _extraGapMs,
-                    min: 0,
-                    max: 1000,
-                    step: 1,
-                    suffix: 'ms',
-                    onChanged: (v) {
-                      setState(() => _extraGapMs = v);
-                      _trainingEngine.updateSettings(
-                        extraGap: Duration(milliseconds: v),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  InkWell(
-                    onTap: _isTraining ? null : _openCountdownTimerSettings,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _isTraining
+                            ? colorScheme.tertiaryContainer
+                            : colorScheme.surfaceContainerHigh,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            'Timer',
-                            style: Theme.of(context).textTheme.titleMedium,
+                            _isTraining ? 'Training…' : 'Idle',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: _isTraining
+                                      ? colorScheme.onTertiaryContainer
+                                      : null,
+                                ),
                           ),
-                          const Spacer(),
-                          Text(
-                            _countdownDisplayText,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(width: 4),
-                          Icon(
-                            Icons.chevron_right,
-                            color: _isTraining
-                                ? Theme.of(context).disabledColor
-                                : null,
-                          ),
+                          if (_isTraining) ...[
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              key: const Key('correctResponseIndicator'),
+                              width: 12,
+                              height: 12,
+                              child: _lastResponseCorrect
+                                  ? const DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        color: Colors.green,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ],
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Character Set',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final type in CharacterSetType.values)
-                        FilterChip(
-                          label: Text(type.label),
-                          showCheckmark: false,
-                          selected: _selectedCharacterSets.contains(type),
-                          onSelected: _isTraining
-                              ? null
-                              : (selected) {
-                                  setState(() {
-                                    if (selected) {
-                                      _selectedCharacterSets.add(type);
-                                    } else {
-                                      _selectedCharacterSets.remove(type);
-                                    }
-                                    // Selecting a chip at all -- even
-                                    // just deselecting one -- supersedes
-                                    // an active problem-character set
-                                    // (morse_icr_spec.md section 39).
-                                    _problemCharacters = null;
-                                  });
-                                },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Center(
-                    child: OutlinedButton(
-                      // Matches the character-set FilterChips' own
-                      // rounded-rectangle shape (Material 3's default
-                      // chip shape: an 8.0 circular border radius)
-                      // rather than OutlinedButton's default pill/
-                      // stadium shape, for visual consistency between
-                      // the two character-set-selection controls on
-                      // this screen.
-                      style: OutlinedButton.styleFrom(
-                        shape: const RoundedRectangleBorder(
-                          borderRadius: BorderRadius.all(Radius.circular(8)),
-                        ),
-                      ),
-                      onPressed: _isTraining
-                          ? null
-                          : _openProblemCharacterKeyboard,
-                      child: Text(
-                        _problemCharacters == null
-                            ? 'Focus (none)'
-                            : 'Focus (${_problemCharacters!.length} active)',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    _isTraining ? 'Training…' : 'Idle',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  if (_isTraining) ...[
-                    const SizedBox(height: 8),
-                    Center(
-                      child: SizedBox(
-                        key: const Key('correctResponseIndicator'),
-                        width: 12,
-                        height: 12,
-                        child: _lastResponseCorrect
-                            ? const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Colors.green,
-                                  shape: BoxShape.circle,
-                                ),
-                              )
-                            : null,
-                      ),
-                    ),
-                  ],
                   const SizedBox(height: 16),
                   FilledButton(
                     style: FilledButton.styleFrom(
                       backgroundColor: _isTraining ? Colors.red : Colors.green,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
                     ),
                     onPressed: _isTraining || _hasSelectedCharacters
                         ? _toggleTraining
@@ -939,6 +1007,57 @@ class _TrainingScreenState extends State<TrainingScreen>
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A tinted, rounded grouping container for a related cluster of main-
+/// screen controls (Training Settings, Timer, Character Set), giving the
+/// page visual structure and a "splash of color" (Bill's own framing)
+/// beyond plain stacked text and controls. Uses Material 3's
+/// `surfaceContainerHigh` tonal-elevation color -- the recommended way
+/// to differentiate a raised grouping from the page background without
+/// picking an arbitrary custom color -- and, when [title] is given, an
+/// accent-colored label using the theme's own primary color so every
+/// section reads as part of one cohesive scheme.
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    this.title,
+    this.padding = const EdgeInsets.all(16),
+    required this.child,
+  });
+
+  final String? title;
+  final EdgeInsets padding;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerHigh,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: padding,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (title != null) ...[
+              Text(
+                title!,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            child,
+          ],
         ),
       ),
     );
