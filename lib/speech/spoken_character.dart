@@ -55,5 +55,20 @@ const Map<String, String> spokenNames = {
 };
 
 /// Returns the text-to-speech input for [character].
-String spokenTextFor(String character) =>
-    spokenNames[character.toUpperCase()] ?? character;
+///
+/// "." and "/" are the two punctuation characters section 35 lets the
+/// learner choose an alternate spoken form for -- "Dot" vs "Period", and
+/// "Slash" vs "Stroke" -- special-cased here rather than in [spokenNames]
+/// itself, since that map doubles as the reverse-lookup table
+/// [character_recognizer.dart] uses to recognize whichever form the
+/// learner says regardless of which one the computer currently speaks.
+String spokenTextFor(
+  String character, {
+  bool speakPeriodAsDot = true,
+  bool speakSlashAsStroke = false,
+}) {
+  final upper = character.toUpperCase();
+  if (upper == '.') return speakPeriodAsDot ? 'dot' : 'period';
+  if (upper == '/') return speakSlashAsStroke ? 'stroke' : 'slash';
+  return spokenNames[upper] ?? character;
+}

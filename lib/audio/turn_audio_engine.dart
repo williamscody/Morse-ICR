@@ -44,7 +44,12 @@ class TurnAudioEngine implements TurnPlayer {
 
   static const _sampleRate = 44100;
 
-  final ToneSynthesizer synthesizer;
+  // Mutable (not final) so [updateMorseSettings] can swap in a new
+  // instance when the learner adjusts Morse pitch/volume (section 35) --
+  // [ToneSynthesizer] itself stays an immutable value type, matching how
+  // [CountdownTimerConfig] and other settings snapshots in this project
+  // are rebuilt wholesale rather than mutated in place.
+  ToneSynthesizer synthesizer;
   final AnswerSpeaker _answerSpeaker;
   AudioPlayer _player;
 
@@ -279,6 +284,20 @@ class TurnAudioEngine implements TurnPlayer {
   // same native playing state.
   @override
   Future<void> stopPlayback() => _player.pause();
+
+  /// Updates the Morse sidetone's pitch/volume (section 35) for turns
+  /// rendered from now on -- like a live WPM/recognition-time change,
+  /// this never touches a turn already rendered or in progress, only
+  /// ones not yet started. [frequencyHz]/[amplitude] leave the
+  /// corresponding [synthesizer] field unchanged when omitted.
+  void updateMorseSettings({double? frequencyHz, double? amplitude}) {
+    synthesizer = ToneSynthesizer(
+      sampleRate: synthesizer.sampleRate,
+      frequencyHz: frequencyHz ?? synthesizer.frequencyHz,
+      amplitude: amplitude ?? synthesizer.amplitude,
+      rampSeconds: synthesizer.rampSeconds,
+    );
+  }
 
   RenderedTurn _renderTurn(
     String character,

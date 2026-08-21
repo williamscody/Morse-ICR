@@ -33,5 +33,27 @@ void main() {
       expect(spokenTextFor('?'), 'question');
       expect(spokenTextFor('/'), 'slash');
     });
+
+    // morse_icr_spec.md section 35: the learner can choose an alternate
+    // spoken form for "." and "/".
+    test('defaults to "dot" and "slash" when no preference is given', () {
+      expect(spokenTextFor('.'), 'dot');
+      expect(spokenTextFor('/'), 'slash');
+    });
+
+    test('speaks "." as "period" when speakPeriodAsDot is false', () {
+      expect(spokenTextFor('.', speakPeriodAsDot: false), 'period');
+    });
+
+    test('speaks "/" as "stroke" when speakSlashAsStroke is true', () {
+      expect(spokenTextFor('/', speakSlashAsStroke: true), 'stroke');
+    });
+
+    test('the period/slash preference does not affect other characters', () {
+      expect(
+        spokenTextFor('B', speakPeriodAsDot: false, speakSlashAsStroke: true),
+        'bee',
+      );
+    });
   });
 }

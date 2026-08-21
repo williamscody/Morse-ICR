@@ -12,9 +12,12 @@ import '../speech/answer_speaker.dart';
 import '../speech/response_listener.dart';
 import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
+import '../training/app_settings.dart';
+import '../training/app_settings_store.dart';
 import '../training/character_set.dart';
 import '../training/countdown_timer_config.dart';
 import '../training/countdown_timer_store.dart';
+import '../training/file_app_settings_store.dart';
 import '../training/file_countdown_timer_store.dart';
 import '../training/file_problem_character_store.dart';
 import '../training/file_training_log_store.dart';
@@ -59,6 +62,7 @@ class TrainingScreen extends StatefulWidget {
     ProblemCharacterStore? problemCharacterStore,
     CountdownTimerStore? countdownTimerStore,
     TrainingLogStore? trainingLogStore,
+    AppSettingsStore? appSettingsStore,
     Future<bool> Function() headphonesConnectedCheck = hasNonSpeakerAudioOutput,
     Future<void> Function() reconfigureAudioSessionOnStart =
         configureAudioSession,
@@ -71,6 +75,7 @@ class TrainingScreen extends StatefulWidget {
        _injectedProblemCharacterStore = problemCharacterStore,
        _injectedCountdownTimerStore = countdownTimerStore,
        _injectedTrainingLogStore = trainingLogStore,
+       _injectedAppSettingsStore = appSettingsStore,
        _headphonesConnectedCheck = headphonesConnectedCheck,
        _reconfigureAudioSessionOnStart = reconfigureAudioSessionOnStart,
        _activateAudioSessionOnStart = activateAudioSessionOnStart,
@@ -82,6 +87,7 @@ class TrainingScreen extends StatefulWidget {
   final ProblemCharacterStore? _injectedProblemCharacterStore;
   final CountdownTimerStore? _injectedCountdownTimerStore;
   final TrainingLogStore? _injectedTrainingLogStore;
+  final AppSettingsStore? _injectedAppSettingsStore;
   final Future<bool> Function() _headphonesConnectedCheck;
   final Future<void> Function() _reconfigureAudioSessionOnStart;
   final Future<void> Function() _activateAudioSessionOnStart;
@@ -143,6 +149,10 @@ class _TrainingScreenState extends State<TrainingScreen>
   bool _voicePreparing = false;
   bool _recognitionEnabled = true;
   bool _lastResponseCorrect = false;
+  // Settings screen preferences (morse_icr_spec.md section 35), loaded
+  // from [_appSettingsStore] in initState and applied to the audio
+  // engines below -- see [_applyAppSettings].
+  AppSettings _appSettings = const AppSettings();
 
   TurnAudioEngine? _turnAudioEngine;
   KeepAliveAudioLoop? _keepAliveLoop;
@@ -152,6 +162,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   late final ProblemCharacterStore _problemCharacterStore;
   late final CountdownTimerStore _countdownTimerStore;
   late final TrainingLogStore _trainingLogStore;
+  late final AppSettingsStore _appSettingsStore;
 
   @override
   void initState() {
@@ -189,6 +200,19 @@ class _TrainingScreenState extends State<TrainingScreen>
     });
     _trainingLogStore =
         widget._injectedTrainingLogStore ?? FileTrainingLogStore();
+    _appSettingsStore =
+        widget._injectedAppSettingsStore ?? FileAppSettingsStore();
+    // Applied once loaded, not just stored -- [_answerSpeaker] and
+    // [_turnAudioEngine] were already constructed above (with default
+    // settings, since a persisted value can't be awaited synchronously
+    // here) and need correcting the moment the real settings are known,
+    // the same "momentarily-stale-then-corrected" approach
+    // [TtsAnswerSpeaker]'s own voice-quality selection already takes.
+    _appSettingsStore.load().then((settings) {
+      if (!mounted) return;
+      setState(() => _appSettings = settings);
+      _applyAppSettings(settings);
+    });
     final answerSpeaker = _answerSpeaker;
     if (answerSpeaker is TtsAnswerSpeaker) {
       // Pre-rendering every character's spoken word (section 36) takes
@@ -652,6 +676,39 @@ class _TrainingScreenState extends State<TrainingScreen>
     }
   }
 
+  // Pushes [settings] out to the audio engines that actually act on them
+  // (section 35) -- called both right after a fresh load (see initState)
+  // and after every live change from the Settings screen. Morse
+  // pitch/volume only take effect on the next turn rendered, the same
+  // "never interrupts a turn already in progress" rule WPM/recognition-
+  // time/extra-gap changes already follow; the "." / "/" spelling
+  // change re-renders just those two characters.
+  void _applyAppSettings(AppSettings settings) {
+    _turnAudioEngine?.updateMorseSettings(
+      frequencyHz: settings.morsePitchHz.toDouble(),
+      amplitude: settings.morseVolumePercent / 100,
+    );
+    final answerSpeaker = _answerSpeaker;
+    if (answerSpeaker is TtsAnswerSpeaker) {
+      unawaited(
+        answerSpeaker.updatePunctuationSpelling(
+          speakPeriodAsDot: settings.speakPeriodAsDot,
+          speakSlashAsStroke: settings.speakSlashAsStroke,
+        ),
+      );
+      answerSpeaker.setVoiceVolume(settings.voiceVolumePercent / 100);
+    }
+  }
+
+  // Persists, applies, and reflects in this screen's own state one
+  // change from the Settings screen -- shared by every `on...Changed`
+  // callback [_openSettings] wires up below.
+  void _updateAppSettings(AppSettings settings) {
+    setState(() => _appSettings = settings);
+    _applyAppSettings(settings);
+    unawaited(_appSettingsStore.save(settings));
+  }
+
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -659,8 +716,27 @@ class _TrainingScreenState extends State<TrainingScreen>
           voiceEnabled: _voiceEnabled,
           voicePreparing: _voicePreparing,
           recognitionEnabled: _recognitionEnabled,
+          speakPeriodAsDot: _appSettings.speakPeriodAsDot,
+          speakSlashAsStroke: _appSettings.speakSlashAsStroke,
+          morsePitchHz: _appSettings.morsePitchHz,
+          morseVolumePercent: _appSettings.morseVolumePercent,
+          voiceVolumePercent: _appSettings.voiceVolumePercent,
           onVoiceChanged: (value) => setState(() => _voiceEnabled = value),
           onRecognitionChanged: _onRecognitionChanged,
+          onSpeakPeriodAsDotChanged: (value) => _updateAppSettings(
+            _appSettings.copyWith(speakPeriodAsDot: value),
+          ),
+          onSpeakSlashAsStrokeChanged: (value) => _updateAppSettings(
+            _appSettings.copyWith(speakSlashAsStroke: value),
+          ),
+          onMorsePitchChanged: (value) =>
+              _updateAppSettings(_appSettings.copyWith(morsePitchHz: value)),
+          onMorseVolumeChanged: (value) => _updateAppSettings(
+            _appSettings.copyWith(morseVolumePercent: value),
+          ),
+          onVoiceVolumeChanged: (value) => _updateAppSettings(
+            _appSettings.copyWith(voiceVolumePercent: value),
+          ),
         ),
       ),
     );

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show File, Platform;
+import 'dart:io' show Directory, File, Platform;
 import 'dart:typed_data' show Int16List;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,6 +8,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../audio/in_memory_audio_source.dart';
+import '../audio/pcm16_gain.dart';
 import '../audio/pcm16_silence_trim.dart';
 import '../audio/pcm16_wav.dart';
 import '../audio/wav_pcm16_converter.dart';
@@ -36,13 +37,28 @@ import 'spoken_character.dart';
 /// I/O timing variance. Both are absent from Morse tone playback, which
 /// has always used in-memory bytes.
 class TtsAnswerSpeaker implements AnswerSpeaker {
-  TtsAnswerSpeaker({FlutterTts? tts, AudioPlayer? player})
-    : _tts = tts ?? FlutterTts(),
-      // See TurnAudioEngine's matching constructor comment --
-      // handleAudioSessionActivation: false avoids this player
-      // redundantly reactivating the shared AVAudioSession (which
-      // TrainingScreen already owns explicitly) on every play() call.
-      _player = player ?? AudioPlayer(handleAudioSessionActivation: false) {
+  /// [speakPeriodAsDot]/[speakSlashAsStroke]/[voiceVolume] seed this
+  /// speaker's section-35 settings for the very first pre-render pass;
+  /// production code (TrainingScreen) generally starts these at their
+  /// defaults (persisted settings load asynchronously, after this
+  /// speaker already exists) and corrects them moments later via
+  /// [updatePunctuationSpelling]/[setVoiceVolume] once the load resolves
+  /// -- the same "reflects momentarily-stale-then-corrected state"
+  /// approach [_useHighestQualityVoice] already takes for a newly
+  /// installed voice.
+  TtsAnswerSpeaker({
+    FlutterTts? tts,
+    AudioPlayer? player,
+    this.speakPeriodAsDot = true,
+    this.speakSlashAsStroke = false,
+    double voiceVolume = 1.0,
+  }) : _tts = tts ?? FlutterTts(),
+       _voiceVolume = voiceVolume,
+       // See TurnAudioEngine's matching constructor comment --
+       // handleAudioSessionActivation: false avoids this player
+       // redundantly reactivating the shared AVAudioSession (which
+       // TrainingScreen already owns explicitly) on every play() call.
+       _player = player ?? AudioPlayer(handleAudioSessionActivation: false) {
     // [speak] awaits this before playing or falling back to live
     // speech, so an early announcement can never race a still-in-flight
     // setup/pre-render call below.
@@ -56,6 +72,9 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   late final Future<void> _ready;
   final Map<String, Int16List> _cachedAudio = {};
   String _voiceIdentifier = 'default';
+  bool speakPeriodAsDot;
+  bool speakSlashAsStroke;
+  double _voiceVolume;
 
   // Every operation that touches _player runs through this queue, so
   // resetPlayer() can never dispose it out from under a still-in-flight
@@ -160,42 +179,50 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     try {
       final directory = await getApplicationDocumentsDirectory();
       for (final character in morseCodeTable.keys) {
-        final spokenText = spokenTextFor(character);
-        final path = '${directory.path}/${_fileNameFor(character, spokenText)}';
-        final file = File(path);
-        if (!await file.exists()) {
-          await _tts.synthesizeToFile(spokenText, path, true);
-        }
-        if (await file.exists()) {
-          final rendered = await file.readAsBytes();
-          // flutter_tts's synthesizeToFile writes 32-bit float PCM at
-          // AVSpeechSynthesizer's own native sample rate on iOS (see
-          // convertToPcm16Wav's doc comment) -- converting once here,
-          // rather than leaving playback to handle that format directly,
-          // is what fixed TTS answer audio's play() taking 600-1000ms+
-          // to be acknowledged regardless of clip length or whether the
-          // phone was locked (morse_icr project memory). A character
-          // whose format this wasn't written to handle (e.g. a future
-          // flutter_tts version changing its output format) is left
-          // uncached rather than caching something unusable for splicing
-          // into a turn buffer -- speak() falls back to live synthesis
-          // for it instead.
-          try {
-            final wav = convertToPcm16Wav(
-              rendered,
-              targetSampleRate: _sampleRate,
-            );
-            _cachedAudio[character] = trimTrailingSilence(
-              readPcm16Samples(wav),
-            );
-          } on FormatException catch (e) {
-            logDebug('prerender($character): conversion failed: $e');
-          }
-        }
+        await _prerenderCharacter(character, directory);
       }
     } catch (_) {
       // Pre-rendering isn't guaranteed to succeed on every device --
       // speak() falls back to live synthesis for anything not cached.
+    }
+  }
+
+  Future<void> _prerenderCharacter(
+    String character, [
+    Directory? directory,
+  ]) async {
+    final resolvedDirectory =
+        directory ?? await getApplicationDocumentsDirectory();
+    final spokenText = spokenTextFor(
+      character,
+      speakPeriodAsDot: speakPeriodAsDot,
+      speakSlashAsStroke: speakSlashAsStroke,
+    );
+    final path =
+        '${resolvedDirectory.path}/${_fileNameFor(character, spokenText)}';
+    final file = File(path);
+    if (!await file.exists()) {
+      await _tts.synthesizeToFile(spokenText, path, true);
+    }
+    if (await file.exists()) {
+      final rendered = await file.readAsBytes();
+      // flutter_tts's synthesizeToFile writes 32-bit float PCM at
+      // AVSpeechSynthesizer's own native sample rate on iOS (see
+      // convertToPcm16Wav's doc comment) -- converting once here,
+      // rather than leaving playback to handle that format directly,
+      // is what fixed TTS answer audio's play() taking 600-1000ms+ to
+      // be acknowledged regardless of clip length or whether the phone
+      // was locked (morse_icr project memory). A character whose
+      // format this wasn't written to handle (e.g. a future flutter_tts
+      // version changing its output format) is left uncached rather
+      // than caching something unusable for splicing into a turn
+      // buffer -- speak() falls back to live synthesis for it instead.
+      try {
+        final wav = convertToPcm16Wav(rendered, targetSampleRate: _sampleRate);
+        _cachedAudio[character] = trimTrailingSilence(readPcm16Samples(wav));
+      } on FormatException catch (e) {
+        logDebug('prerender($character): conversion failed: $e');
+      }
     }
   }
 
@@ -207,8 +234,48 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   String _fileNameFor(String character, String spokenText) =>
       'spoken_${character.codeUnitAt(0)}_${Object.hash(spokenText, _voiceIdentifier)}.wav';
 
+  /// Updates which spoken form "." and "/" use going forward (section
+  /// 35), re-rendering just those two characters -- everything else
+  /// stays cached from before. A no-op if neither actually changed, so
+  /// [TrainingScreen] can call this on every Settings load/change
+  /// without worrying about redundant re-renders.
+  Future<void> updatePunctuationSpelling({
+    required bool speakPeriodAsDot,
+    required bool speakSlashAsStroke,
+  }) {
+    return _enqueue(() async {
+      if (this.speakPeriodAsDot == speakPeriodAsDot &&
+          this.speakSlashAsStroke == speakSlashAsStroke) {
+        return;
+      }
+      this.speakPeriodAsDot = speakPeriodAsDot;
+      this.speakSlashAsStroke = speakSlashAsStroke;
+      try {
+        final directory = await getApplicationDocumentsDirectory();
+        await _prerenderCharacter('.', directory);
+        await _prerenderCharacter('/', directory);
+      } catch (_) {
+        // Same tolerance as _prerenderAll -- speak() falls back to live
+        // synthesis for anything that fails to (re-)cache.
+      }
+    });
+  }
+
+  /// Updates the spoken answer's playback volume (section 35's "Voice:
+  /// Volume") going forward -- applied as sample gain (see
+  /// [scaleInt16Samples]'s doc comment for why), plus the live TTS
+  /// engine's own volume for [_speak]'s uncached fallback path.
+  void setVoiceVolume(double volume) {
+    _voiceVolume = volume;
+    unawaited(_tts.setVolume(volume));
+  }
+
   @override
-  Int16List? cachedSamplesFor(String character) => _cachedAudio[character];
+  Int16List? cachedSamplesFor(String character) {
+    final cached = _cachedAudio[character];
+    if (cached == null) return null;
+    return scaleInt16Samples(cached, _voiceVolume);
+  }
 
   @override
   Future<void> speak(String character) {
@@ -220,7 +287,13 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     final cachedSamples = _cachedAudio[character];
     if (cachedSamples == null) {
       logDebug('speak($character): no cached audio, live synth');
-      await _tts.speak(spokenTextFor(character));
+      await _tts.speak(
+        spokenTextFor(
+          character,
+          speakPeriodAsDot: speakPeriodAsDot,
+          speakSlashAsStroke: speakSlashAsStroke,
+        ),
+      );
       return;
     }
 
@@ -235,7 +308,10 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     await _player.pause();
     await _player.setAudioSource(
       InMemoryAudioSource(
-        pcm16WavBytes(cachedSamples, sampleRate: _sampleRate),
+        pcm16WavBytes(
+          scaleInt16Samples(cachedSamples, _voiceVolume),
+          sampleRate: _sampleRate,
+        ),
       ),
     );
 
