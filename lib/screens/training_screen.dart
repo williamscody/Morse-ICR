@@ -13,9 +13,13 @@ import '../speech/response_listener.dart';
 import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
 import '../training/character_set.dart';
+import '../training/countdown_timer_config.dart';
+import '../training/countdown_timer_store.dart';
+import '../training/file_countdown_timer_store.dart';
 import '../training/file_problem_character_store.dart';
 import '../training/problem_character_store.dart';
 import '../training/training_engine.dart';
+import 'countdown_timer_settings.dart';
 import 'problem_character_keyboard.dart';
 import 'settings_screen.dart';
 import 'widgets/stepped_int_control.dart';
@@ -49,6 +53,7 @@ class TrainingScreen extends StatefulWidget {
     AnswerSpeaker? answerSpeaker,
     ResponseListener? responseListener,
     ProblemCharacterStore? problemCharacterStore,
+    CountdownTimerStore? countdownTimerStore,
     Future<bool> Function() headphonesConnectedCheck = hasNonSpeakerAudioOutput,
     Future<void> Function() reconfigureAudioSessionOnStart =
         configureAudioSession,
@@ -59,6 +64,7 @@ class TrainingScreen extends StatefulWidget {
        _injectedAnswerSpeaker = answerSpeaker,
        _injectedResponseListener = responseListener,
        _injectedProblemCharacterStore = problemCharacterStore,
+       _injectedCountdownTimerStore = countdownTimerStore,
        _headphonesConnectedCheck = headphonesConnectedCheck,
        _reconfigureAudioSessionOnStart = reconfigureAudioSessionOnStart,
        _activateAudioSessionOnStart = activateAudioSessionOnStart,
@@ -68,6 +74,7 @@ class TrainingScreen extends StatefulWidget {
   final AnswerSpeaker? _injectedAnswerSpeaker;
   final ResponseListener? _injectedResponseListener;
   final ProblemCharacterStore? _injectedProblemCharacterStore;
+  final CountdownTimerStore? _injectedCountdownTimerStore;
   final Future<bool> Function() _headphonesConnectedCheck;
   final Future<void> Function() _reconfigureAudioSessionOnStart;
   final Future<void> Function() _activateAudioSessionOnStart;
@@ -94,6 +101,19 @@ class _TrainingScreenState extends State<TrainingScreen>
   // active until the user selects a different character set or edits
   // the problem-character list").
   List<String>? _problemCharacters;
+  // The 3 memory slots plus which one, if any, is the active timer that
+  // auto-stops training (morse_icr_spec.md section 9) -- persisted via
+  // [_countdownTimerStore], loaded once in [initState] the same way
+  // [_problemCharacters] is.
+  CountdownTimerConfig _countdownTimerConfig = const CountdownTimerConfig();
+  // Non-null only while the active timer is actually counting down
+  // during a training session -- null the rest of the time, so the main
+  // screen falls back to displaying the selected memory's stored
+  // duration (section 9: the timer value is "restored to its most
+  // recent value" once a session ends, whether by the timer reaching
+  // zero or the learner tapping Stop).
+  Duration? _countdownRemaining;
+  Timer? _countdownTicker;
   bool _isTraining = false;
   // Not shown in the UI -- tracked ahead of session logging
   // (Milestone 10), which will need a played-character count.
@@ -109,6 +129,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   late final AnswerSpeaker _answerSpeaker;
   late final ResponseListener _responseListener;
   late final ProblemCharacterStore _problemCharacterStore;
+  late final CountdownTimerStore _countdownTimerStore;
 
   @override
   void initState() {
@@ -137,6 +158,12 @@ class _TrainingScreenState extends State<TrainingScreen>
     _problemCharacterStore.load().then((characters) {
       if (!mounted || characters == null || characters.isEmpty) return;
       setState(() => _problemCharacters = characters);
+    });
+    _countdownTimerStore =
+        widget._injectedCountdownTimerStore ?? FileCountdownTimerStore();
+    _countdownTimerStore.load().then((config) {
+      if (!mounted) return;
+      setState(() => _countdownTimerConfig = config);
     });
     final answerSpeaker = _answerSpeaker;
     if (answerSpeaker is TtsAnswerSpeaker) {
@@ -201,6 +228,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _resumeDebounceTimer?.cancel();
+    _countdownTicker?.cancel();
     _trainingEngine.stop();
     _turnAudioEngine?.dispose();
     _keepAliveLoop?.dispose();
@@ -340,7 +368,17 @@ class _TrainingScreenState extends State<TrainingScreen>
           }),
         );
       }
-      setState(() => _isTraining = false);
+      _cancelCountdownTicker();
+      setState(() {
+        _isTraining = false;
+        // Reset to the memory's stored duration rather than leaving the
+        // display sitting mid-countdown or at zero (morse_icr_spec.md
+        // section 9: "the timer value should be restored to its most
+        // recent value") -- see [_countdownDisplayText], which falls
+        // back to the selected memory's stored duration whenever
+        // [_countdownRemaining] is null.
+        _countdownRemaining = null;
+      });
       logDebug('stop: done');
       return;
     }
@@ -359,6 +397,7 @@ class _TrainingScreenState extends State<TrainingScreen>
       _isTraining = true;
       _charactersPlayed = 0;
     });
+    _startCountdownTicker();
     // [_reactivateAudioSession] only reconfigures on resume if a
     // session was already running (so it doesn't wake up an idle
     // session behind the learner's back) -- but that means a session
@@ -423,6 +462,59 @@ class _TrainingScreenState extends State<TrainingScreen>
       _problemCharacters ?? charactersForSelection(_selectedCharacterSets);
 
   bool get _hasSelectedCharacters => _activeCharacters.isNotEmpty;
+
+  // No-op (leaves the countdown row showing "Off") unless a memory is
+  // both selected and actually has a stored duration -- e.g. right after
+  // its memory was cleared out from under it (morse_icr project: see
+  // [CountdownTimerSettings._editSlot]'s auto-deselect).
+  void _startCountdownTicker() {
+    final duration = _countdownTimerConfig.selectedDuration;
+    if (duration == null || duration <= Duration.zero) return;
+    _countdownRemaining = duration;
+    _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      final remaining = _countdownRemaining;
+      if (remaining == null) return;
+      final next = remaining - const Duration(seconds: 1);
+      if (next <= Duration.zero) {
+        _cancelCountdownTicker();
+        if (mounted) setState(() => _countdownRemaining = null);
+        // Section 9: "Stop generating new training characters... Stop
+        // the recognition cycle" -- the same full Stop path a manual tap
+        // runs, so nothing about session teardown needs duplicating
+        // here.
+        unawaited(_toggleTraining());
+        return;
+      }
+      if (mounted) setState(() => _countdownRemaining = next);
+    });
+  }
+
+  void _cancelCountdownTicker() {
+    _countdownTicker?.cancel();
+    _countdownTicker = null;
+  }
+
+  // What the main-screen timer row shows: the live countdown while one
+  // is actually running, otherwise the selected memory's stored
+  // duration (so it reads as ready-to-run rather than stuck at the last
+  // value it counted down to), or "Off" when no memory is selected.
+  String get _countdownDisplayText {
+    final remaining = _countdownRemaining;
+    if (remaining != null) return formatCountdown(remaining);
+    final selected = _countdownTimerConfig.selectedDuration;
+    if (selected != null) return formatCountdown(selected);
+    return 'Off';
+  }
+
+  Future<void> _openCountdownTimerSettings() async {
+    final config = await Navigator.of(context).push<CountdownTimerConfig>(
+      MaterialPageRoute(
+        builder: (_) => CountdownTimerSettings(store: _countdownTimerStore),
+      ),
+    );
+    if (config == null || !mounted) return;
+    setState(() => _countdownTimerConfig = config);
+  }
 
   Future<void> _openProblemCharacterKeyboard() async {
     final characters = await Navigator.of(context).push<List<String>>(
@@ -551,6 +643,33 @@ class _TrainingScreenState extends State<TrainingScreen>
                         extraGap: Duration(milliseconds: v),
                       );
                     },
+                  ),
+                  const SizedBox(height: 24),
+                  InkWell(
+                    onTap: _isTraining ? null : _openCountdownTimerSettings,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Timer',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const Spacer(),
+                          Text(
+                            _countdownDisplayText,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.chevron_right,
+                            color: _isTraining
+                                ? Theme.of(context).disabledColor
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   Text(

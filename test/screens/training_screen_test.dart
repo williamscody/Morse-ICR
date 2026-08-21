@@ -8,6 +8,8 @@ import 'package:morse_icr/screens/settings_screen.dart';
 import 'package:morse_icr/screens/training_screen.dart';
 import 'package:morse_icr/speech/answer_speaker.dart';
 import 'package:morse_icr/speech/response_listener.dart';
+import 'package:morse_icr/training/countdown_timer_config.dart';
+import 'package:morse_icr/training/countdown_timer_store.dart';
 import 'package:morse_icr/training/problem_character_store.dart';
 import 'package:morse_icr/training/training_engine.dart';
 
@@ -109,6 +111,22 @@ class _FakeProblemCharacterStore implements ProblemCharacterStore {
   }
 }
 
+/// An in-memory store so Timer-row tests never touch the real
+/// [FileCountdownTimerStore]'s platform-backed `path_provider` calls.
+class _FakeCountdownTimerStore implements CountdownTimerStore {
+  _FakeCountdownTimerStore([this.saved = const CountdownTimerConfig()]);
+
+  CountdownTimerConfig saved;
+
+  @override
+  Future<CountdownTimerConfig> load() async => saved;
+
+  @override
+  Future<void> save(CountdownTimerConfig config) async {
+    saved = config;
+  }
+}
+
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
 
@@ -118,6 +136,7 @@ void main() {
     AnswerSpeaker? answerSpeaker,
     ResponseListener? responseListener,
     ProblemCharacterStore? problemCharacterStore,
+    CountdownTimerStore? countdownTimerStore,
   }) => wrap(
     TrainingScreen(
       trainingEngine: TrainingEngine(turnPlayer: _FakeTurnPlayer()),
@@ -125,6 +144,8 @@ void main() {
       responseListener: responseListener ?? _FakeResponseListener(),
       problemCharacterStore:
           problemCharacterStore ?? _FakeProblemCharacterStore(),
+      countdownTimerStore:
+          countdownTimerStore ?? _FakeCountdownTimerStore(),
       headphonesConnectedCheck: () async => true,
       reconfigureAudioSessionOnStart: () async {},
       activateAudioSessionOnStart: () async {},
@@ -243,6 +264,7 @@ void main() {
       ),
     );
 
+    await tester.ensureVisible(find.text('0-9'));
     await tester.tap(find.text('0-9'));
     await tester.pump();
 
@@ -590,6 +612,7 @@ void main() {
       ),
     );
 
+    await tester.ensureVisible(find.text('A-Z'));
     await tester.tap(find.text('A-Z')); // deselect the only active set
     await tester.pump();
 
@@ -766,4 +789,130 @@ void main() {
     await tester.tap(find.text('Stop'));
     await tester.pump();
   });
+
+  testWidgets('the Timer row shows "Off" when no memory is selected', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrapTraining());
+    await tester.pump();
+
+    expect(find.text('Off'), findsOneWidget);
+  });
+
+  testWidgets(
+    'the Timer row shows the active memory\'s stored duration from cold '
+    'launch',
+    (tester) async {
+      final store = _FakeCountdownTimerStore(
+        const CountdownTimerConfig(
+          slotSeconds: [300, null, null],
+          selectedSlot: 0,
+        ),
+      );
+      await tester.pumpWidget(wrapTraining(countdownTimerStore: store));
+      await tester.pump();
+
+      expect(find.text('05:00'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'tapping the Timer row opens Countdown Timer Settings, and a memory '
+    'selected there updates the main-screen display',
+    (tester) async {
+      final store = _FakeCountdownTimerStore();
+      await tester.pumpWidget(wrapTraining(countdownTimerStore: store));
+      await tester.pump();
+
+      await tester.tap(find.text('Timer'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(TextButton, 'Edit').first);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, '2');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Memory 1'));
+      await tester.pump();
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('02:00'), findsOneWidget);
+      expect(store.saved.selectedSlot, 0);
+    },
+  );
+
+  testWidgets('the Timer row is disabled while training', (tester) async {
+    await tester.pumpWidget(wrapTraining());
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+
+    final inkWell = tester.widget<InkWell>(
+      find.ancestor(of: find.text('Timer'), matching: find.byType(InkWell)),
+    );
+    expect(inkWell.onTap, isNull);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+  });
+
+  testWidgets(
+    'a running countdown counts down by the second, stops training when '
+    'it reaches zero, and restores the display to the configured duration',
+    (tester) async {
+      final store = _FakeCountdownTimerStore(
+        const CountdownTimerConfig(slotSeconds: [3, null, null], selectedSlot: 0),
+      );
+      await tester.pumpWidget(wrapTraining(countdownTimerStore: store));
+      await tester.pump();
+      expect(find.text('00:03'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      expect(find.text('Training…'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('00:02'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('00:01'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(); // let the auto-stop's async work settle
+
+      expect(find.text('Idle'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
+      // Restored to the configured duration, not stuck at 00:00.
+      expect(find.text('00:03'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'manually stopping before a running countdown expires still restores '
+    'the display to the configured duration, not the mid-countdown value',
+    (tester) async {
+      final store = _FakeCountdownTimerStore(
+        const CountdownTimerConfig(
+          slotSeconds: [300, null, null],
+          selectedSlot: 0,
+        ),
+      );
+      await tester.pumpWidget(wrapTraining(countdownTimerStore: store));
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('04:58'), findsOneWidget);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      expect(find.text('05:00'), findsOneWidget);
+    },
+  );
 }
