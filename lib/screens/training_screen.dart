@@ -17,11 +17,15 @@ import '../training/countdown_timer_config.dart';
 import '../training/countdown_timer_store.dart';
 import '../training/file_countdown_timer_store.dart';
 import '../training/file_problem_character_store.dart';
+import '../training/file_training_log_store.dart';
 import '../training/problem_character_store.dart';
 import '../training/training_engine.dart';
+import '../training/training_log_store.dart';
+import '../training/training_session_record.dart';
 import 'countdown_timer_settings.dart';
 import 'problem_character_keyboard.dart';
 import 'settings_screen.dart';
+import 'training_log_screen.dart';
 import 'widgets/stepped_int_control.dart';
 
 /// The training screen wired to the character-generation loop,
@@ -54,6 +58,7 @@ class TrainingScreen extends StatefulWidget {
     ResponseListener? responseListener,
     ProblemCharacterStore? problemCharacterStore,
     CountdownTimerStore? countdownTimerStore,
+    TrainingLogStore? trainingLogStore,
     Future<bool> Function() headphonesConnectedCheck = hasNonSpeakerAudioOutput,
     Future<void> Function() reconfigureAudioSessionOnStart =
         configureAudioSession,
@@ -65,6 +70,7 @@ class TrainingScreen extends StatefulWidget {
        _injectedResponseListener = responseListener,
        _injectedProblemCharacterStore = problemCharacterStore,
        _injectedCountdownTimerStore = countdownTimerStore,
+       _injectedTrainingLogStore = trainingLogStore,
        _headphonesConnectedCheck = headphonesConnectedCheck,
        _reconfigureAudioSessionOnStart = reconfigureAudioSessionOnStart,
        _activateAudioSessionOnStart = activateAudioSessionOnStart,
@@ -75,6 +81,7 @@ class TrainingScreen extends StatefulWidget {
   final ResponseListener? _injectedResponseListener;
   final ProblemCharacterStore? _injectedProblemCharacterStore;
   final CountdownTimerStore? _injectedCountdownTimerStore;
+  final TrainingLogStore? _injectedTrainingLogStore;
   final Future<bool> Function() _headphonesConnectedCheck;
   final Future<void> Function() _reconfigureAudioSessionOnStart;
   final Future<void> Function() _activateAudioSessionOnStart;
@@ -115,9 +122,23 @@ class _TrainingScreenState extends State<TrainingScreen>
   Duration? _countdownRemaining;
   Timer? _countdownTicker;
   bool _isTraining = false;
-  // Not shown in the UI -- tracked ahead of session logging
-  // (Milestone 10), which will need a played-character count.
+  // Not shown in the UI -- tracked ahead of character-level statistics
+  // (Milestone 15), which will need a played-character count. Not part
+  // of the training log (Milestone 10, morse_icr_spec.md section 21)
+  // itself -- Bill's own field list for that omitted it.
   int _charactersPlayed = 0;
+  // Set the moment Start actually begins the training loop, read back
+  // when the session ends (whether by Stop or the countdown timer
+  // reaching zero) to compute the elapsed time recorded in the training
+  // log (section 22).
+  DateTime? _sessionStartedAt;
+  // The speed/recognition-time/extra-gap settings in effect the moment
+  // the session started, logged alongside it -- all three stay live-
+  // adjustable mid-session, so this is the settings the learner actually
+  // chose to *start* training at, not necessarily what they ended on.
+  int _sessionStartWpm = 0;
+  int _sessionStartRecognitionTimeMs = 0;
+  int _sessionStartExtraGapMs = 0;
   bool _voiceEnabled = true;
   bool _voicePreparing = false;
   bool _recognitionEnabled = true;
@@ -130,6 +151,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   late final ResponseListener _responseListener;
   late final ProblemCharacterStore _problemCharacterStore;
   late final CountdownTimerStore _countdownTimerStore;
+  late final TrainingLogStore _trainingLogStore;
 
   @override
   void initState() {
@@ -165,6 +187,8 @@ class _TrainingScreenState extends State<TrainingScreen>
       if (!mounted) return;
       setState(() => _countdownTimerConfig = config);
     });
+    _trainingLogStore =
+        widget._injectedTrainingLogStore ?? FileTrainingLogStore();
     final answerSpeaker = _answerSpeaker;
     if (answerSpeaker is TtsAnswerSpeaker) {
       // Pre-rendering every character's spoken word (section 36) takes
@@ -329,17 +353,25 @@ class _TrainingScreenState extends State<TrainingScreen>
   // added.
   bool _togglingTraining = false;
 
-  Future<void> _toggleTraining() async {
+  // [recordedDuration] lets the countdown-timer's own expiry path (see
+  // [_startCountdownTicker]) log the timer's full configured duration
+  // rather than a wall-clock elapsed time that's inherently a shade
+  // short of it (a Timer.periodic tick doesn't land at the exact instant
+  // the countdown reaches zero) -- morse_icr_spec.md section 22: "If the
+  // timer reaches zero, record the full configured duration." A manual
+  // Stop tap always omits it, falling back to actual wall-clock elapsed
+  // time (section 22's other case).
+  Future<void> _toggleTraining({Duration? recordedDuration}) async {
     if (_togglingTraining) return;
     _togglingTraining = true;
     try {
-      await _toggleTrainingUnguarded();
+      await _toggleTrainingUnguarded(recordedDuration: recordedDuration);
     } finally {
       _togglingTraining = false;
     }
   }
 
-  Future<void> _toggleTrainingUnguarded() async {
+  Future<void> _toggleTrainingUnguarded({Duration? recordedDuration}) async {
     if (_isTraining) {
       logDebug('stop: tapped');
       await _trainingEngine.stop();
@@ -368,6 +400,7 @@ class _TrainingScreenState extends State<TrainingScreen>
           }),
         );
       }
+      await _recordCompletedSession(recordedDuration);
       _cancelCountdownTicker();
       setState(() {
         _isTraining = false;
@@ -393,6 +426,10 @@ class _TrainingScreenState extends State<TrainingScreen>
       return;
     }
 
+    _sessionStartedAt = DateTime.now();
+    _sessionStartWpm = _wpm;
+    _sessionStartRecognitionTimeMs = _recognitionTimeMs;
+    _sessionStartExtraGapMs = _extraGapMs;
     setState(() {
       _isTraining = true;
       _charactersPlayed = 0;
@@ -463,6 +500,52 @@ class _TrainingScreenState extends State<TrainingScreen>
 
   bool get _hasSelectedCharacters => _activeCharacters.isNotEmpty;
 
+  // The training log's summary of whichever character set or problem-
+  // character list was actually active -- safe to read at Stop time
+  // rather than snapshotting at Start, since both the character-set
+  // chips and the Focus button are disabled for the whole session
+  // (see [build]), so this can't have changed mid-session.
+  String get _focusSummary {
+    final problemCharacters = _problemCharacters;
+    if (problemCharacters != null) return problemCharacters.join(' ');
+    return _selectedCharacterSets.map((type) => type.label).join(', ');
+  }
+
+  // Appends one entry to the training log (morse_icr_spec.md section 21)
+  // for the session that's ending -- called from the Stop path
+  // regardless of whether Stop was tapped manually or the countdown
+  // timer triggered it. A no-op if [_sessionStartedAt] is somehow unset
+  // (shouldn't happen: it's set at the top of Start, and Stop only ever
+  // runs while [_isTraining] is true).
+  Future<void> _recordCompletedSession(Duration? recordedDuration) async {
+    final startedAt = _sessionStartedAt;
+    if (startedAt == null) return;
+    _sessionStartedAt = null;
+    final record = TrainingSessionRecord(
+      id: startedAt.microsecondsSinceEpoch.toString(),
+      startedAt: startedAt,
+      duration: recordedDuration ?? DateTime.now().difference(startedAt),
+      focusSummary: _focusSummary,
+      wpm: _sessionStartWpm,
+      recognitionTimeMs: _sessionStartRecognitionTimeMs,
+      extraGapMs: _sessionStartExtraGapMs,
+    );
+    try {
+      final existing = await _trainingLogStore.load();
+      await _trainingLogStore.save([...existing, record]);
+    } catch (e) {
+      logDebug('stop: training log save failed: $e');
+    }
+  }
+
+  void _openTrainingLog() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TrainingLogScreen(store: _trainingLogStore),
+      ),
+    );
+  }
+
   // No-op (leaves the countdown row showing "Off") unless a memory is
   // both selected and actually has a stored duration -- e.g. right after
   // its memory was cleared out from under it (morse_icr project: see
@@ -481,8 +564,10 @@ class _TrainingScreenState extends State<TrainingScreen>
         // Section 9: "Stop generating new training characters... Stop
         // the recognition cycle" -- the same full Stop path a manual tap
         // runs, so nothing about session teardown needs duplicating
-        // here.
-        unawaited(_toggleTraining());
+        // here. [duration] (not the possibly-short-by-a-tick wall-clock
+        // elapsed time) is what gets logged -- see [_toggleTraining]'s
+        // [recordedDuration] doc.
+        unawaited(_toggleTraining(recordedDuration: duration));
         return;
       }
       if (mounted) setState(() => _countdownRemaining = next);
@@ -586,6 +671,11 @@ class _TrainingScreenState extends State<TrainingScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Morse ICR'),
+        leading: IconButton(
+          icon: const Icon(Icons.history),
+          tooltip: 'Training Log',
+          onPressed: _openTrainingLog,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),

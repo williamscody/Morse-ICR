@@ -79,15 +79,26 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Problem Characters'),
+        // Default AppBar title is single-line-ellipsis; taller toolbar
+        // plus an explicit line count gives "Problem Characters" room to
+        // wrap instead of truncating to "Problem C..." (Bill, on-device).
+        toolbarHeight: 72,
+        title: const Text(
+          'Problem\nCharacters',
+          maxLines: 2,
+          overflow: TextOverflow.visible,
+        ),
         actions: [
           TextButton(
             onPressed: _loaded ? _clear : null,
             child: const Text('Clear'),
           ),
-          TextButton(
-            onPressed: _loaded ? _done : null,
-            child: const Text('Done'),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton(
+              onPressed: _loaded ? _done : null,
+              child: const Text('Done'),
+            ),
           ),
         ],
       ),

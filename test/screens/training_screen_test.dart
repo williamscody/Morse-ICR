@@ -12,6 +12,8 @@ import 'package:morse_icr/training/countdown_timer_config.dart';
 import 'package:morse_icr/training/countdown_timer_store.dart';
 import 'package:morse_icr/training/problem_character_store.dart';
 import 'package:morse_icr/training/training_engine.dart';
+import 'package:morse_icr/training/training_log_store.dart';
+import 'package:morse_icr/training/training_session_record.dart';
 
 /// Locates the [SettingsScreen] pushed by tapping the app bar's
 /// settings icon. Flutter's default byType finder skips "offstage"
@@ -127,6 +129,25 @@ class _FakeCountdownTimerStore implements CountdownTimerStore {
   }
 }
 
+/// An in-memory store so every Stop -- which now awaits
+/// [TrainingLogStore] as part of recording the completed session --
+/// never touches the real [FileTrainingLogStore]'s platform-backed
+/// `path_provider`/`dart:io` calls, which (unlike the fire-and-forget
+/// loads other stores do in `initState`) are on the critical Stop path
+/// and don't resolve within a single `tester.pump()` against real disk
+/// I/O.
+class _FakeTrainingLogStore implements TrainingLogStore {
+  List<TrainingSessionRecord> saved = [];
+
+  @override
+  Future<List<TrainingSessionRecord>> load() async => saved;
+
+  @override
+  Future<void> save(List<TrainingSessionRecord> records) async {
+    saved = records;
+  }
+}
+
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
 
@@ -137,6 +158,7 @@ void main() {
     ResponseListener? responseListener,
     ProblemCharacterStore? problemCharacterStore,
     CountdownTimerStore? countdownTimerStore,
+    TrainingLogStore? trainingLogStore,
   }) => wrap(
     TrainingScreen(
       trainingEngine: TrainingEngine(turnPlayer: _FakeTurnPlayer()),
@@ -146,6 +168,7 @@ void main() {
           problemCharacterStore ?? _FakeProblemCharacterStore(),
       countdownTimerStore:
           countdownTimerStore ?? _FakeCountdownTimerStore(),
+      trainingLogStore: trainingLogStore ?? _FakeTrainingLogStore(),
       headphonesConnectedCheck: () async => true,
       reconfigureAudioSessionOnStart: () async {},
       activateAudioSessionOnStart: () async {},
@@ -160,6 +183,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -186,6 +210,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -208,6 +233,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -232,6 +258,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -256,6 +283,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -283,6 +311,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -302,6 +331,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -357,7 +387,8 @@ void main() {
             trainingEngine: engine,
             answerSpeaker: _FakeSpeaker(),
             responseListener: _FakeResponseListener(),
-            headphonesConnectedCheck: () async => true,
+            trainingLogStore: _FakeTrainingLogStore(),
+          headphonesConnectedCheck: () async => true,
             // Simulates a slow real platform call landing between the
             // button optimistically flipping to "Stop" and the engine
             // actually starting.
@@ -512,7 +543,8 @@ void main() {
             trainingEngine: engine,
             answerSpeaker: _FakeSpeaker(),
             responseListener: listener,
-            headphonesConnectedCheck: () async => true,
+            trainingLogStore: _FakeTrainingLogStore(),
+          headphonesConnectedCheck: () async => true,
             reconfigureAudioSessionOnStart: () async {},
             activateAudioSessionOnStart: () async {},
             deactivateAudioSessionOnStop: () async {},
@@ -557,6 +589,7 @@ void main() {
           trainingEngine: engine,
           answerSpeaker: _FakeSpeaker(),
           responseListener: listener,
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -604,6 +637,7 @@ void main() {
       wrap(
         TrainingScreen(
           answerSpeaker: _FakeSpeaker(),
+          trainingLogStore: _FakeTrainingLogStore(),
           headphonesConnectedCheck: () async => true,
           reconfigureAudioSessionOnStart: () async {},
           activateAudioSessionOnStart: () async {},
@@ -913,6 +947,118 @@ void main() {
       await tester.pump();
 
       expect(find.text('05:00'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'manually stopping records a training-log entry with the active '
+    'character set as its focus summary',
+    (tester) async {
+      final logStore = _FakeTrainingLogStore();
+      await tester.pumpWidget(wrapTraining(trainingLogStore: logStore));
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      expect(logStore.saved, hasLength(1));
+      final record = logStore.saved.single;
+      expect(record.focusSummary, 'A-Z');
+      // Default Character Speed/Recognition Time/Extra Gap
+      // (training_screen.dart's own initial field values).
+      expect(record.wpm, 90);
+      expect(record.recognitionTimeMs, 500);
+      expect(record.extraGapMs, 0);
+      // A manual stop's recorded duration is real wall-clock elapsed
+      // time (morse_icr_spec.md section 22), not a virtualized Timer --
+      // `tester.pump(duration)` only advances scheduled Timers/frames,
+      // not `DateTime.now()`, so this only asserts it's a real,
+      // non-negative measurement rather than a specific value.
+      expect(record.duration, greaterThanOrEqualTo(Duration.zero));
+    },
+  );
+
+  testWidgets(
+    'the log records the speed/recognition-time/gap settings in effect '
+    'when Start was tapped, not just the defaults',
+    (tester) async {
+      final logStore = _FakeTrainingLogStore();
+      await tester.pumpWidget(wrapTraining(trainingLogStore: logStore));
+
+      final addButtons = find.byIcon(Icons.add_circle_outline);
+      await tester.ensureVisible(addButtons.first);
+      await tester.tap(addButtons.first); // Character Speed: 90 -> 91
+      await tester.pump();
+      await tester.ensureVisible(addButtons.at(1));
+      await tester.tap(addButtons.at(1)); // Recognition Time: 500 -> 501
+      await tester.pump();
+      await tester.ensureVisible(addButtons.at(2));
+      await tester.tap(addButtons.at(2)); // Extra Gap: 0 -> 1
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      final record = logStore.saved.single;
+      expect(record.wpm, 91);
+      expect(record.recognitionTimeMs, 501);
+      expect(record.extraGapMs, 1);
+    },
+  );
+
+  testWidgets(
+    'a problem-character set active at Stop is recorded as the focus '
+    'summary instead of the character-set chips',
+    (tester) async {
+      final logStore = _FakeTrainingLogStore();
+      final problemStore = _FakeProblemCharacterStore()..saved = ['K', 'R'];
+      await tester.pumpWidget(
+        wrapTraining(
+          trainingLogStore: logStore,
+          problemCharacterStore: problemStore,
+        ),
+      );
+      await tester.pump(); // let cold-launch problem-set activation settle
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      expect(logStore.saved.single.focusSummary, 'K R');
+    },
+  );
+
+  testWidgets(
+    'the countdown timer reaching zero records the timer\'s full '
+    'configured duration, not a wall-clock elapsed time a shade short '
+    'of it',
+    (tester) async {
+      final logStore = _FakeTrainingLogStore();
+      final timerStore = _FakeCountdownTimerStore(
+        const CountdownTimerConfig(slotSeconds: [3, null, null], selectedSlot: 0),
+      );
+      await tester.pumpWidget(
+        wrapTraining(
+          trainingLogStore: logStore,
+          countdownTimerStore: timerStore,
+        ),
+      );
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump(); // let the auto-stop's async work settle
+
+      expect(logStore.saved.single.duration, const Duration(seconds: 3));
     },
   );
 }
