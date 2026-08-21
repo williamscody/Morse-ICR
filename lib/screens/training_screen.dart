@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../audio/audio_session_setup.dart';
 import '../audio/keep_alive_audio_loop.dart';
+import '../audio/training_audio_handler.dart';
 import '../audio/turn_audio_engine.dart';
 import '../debug_log.dart';
 import '../speech/answer_speaker.dart';
@@ -424,6 +425,7 @@ class _TrainingScreenState extends State<TrainingScreen>
           }),
         );
       }
+      trainingAudioHandler?.reportIdle();
       await _recordCompletedSession(recordedDuration);
       _cancelCountdownTicker();
       setState(() {
@@ -483,6 +485,7 @@ class _TrainingScreenState extends State<TrainingScreen>
     } catch (e) {
       logDebug('start: reconfigure/activate failed: $e');
     }
+    trainingAudioHandler?.reportTraining();
     // Fire-and-forget, not awaited: on-device measurement found this
     // call alone can take ~10s to resolve (vs. ~100-300ms for the
     // Morse player's own play() calls) -- likely LoopMode interacting
