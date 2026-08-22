@@ -80,3 +80,14 @@ List<String> charactersForSelection(Set<CharacterSetType> selectedTypes) {
   }
   return result;
 }
+
+/// The full common Morse character set in one view (morse_icr_spec.md
+/// section 12) -- letters, numbers, and section 39's minimum punctuation
+/// set -- for UI that presents every character at once rather than by
+/// character-set-type selection (e.g. [ProblemCharacterKeyboard],
+/// `EnrollmentScreen`).
+final List<String> allCharacters = [
+  ...characterSets[CharacterSetType.letters]!,
+  ...characterSets[CharacterSetType.numbers]!,
+  ...characterSets[CharacterSetType.punctuation]!,
+];

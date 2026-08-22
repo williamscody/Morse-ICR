@@ -10,6 +10,8 @@ import '../audio/training_audio_handler.dart';
 import '../audio/turn_audio_engine.dart';
 import '../debug_log.dart';
 import '../speech/answer_speaker.dart';
+import '../speech/enrollment_store.dart';
+import '../speech/file_enrollment_store.dart';
 import '../speech/response_listener.dart';
 import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
@@ -27,6 +29,7 @@ import '../training/training_engine.dart';
 import '../training/training_log_store.dart';
 import '../training/training_session_record.dart';
 import 'countdown_timer_settings.dart';
+import 'enrollment_screen.dart';
 import 'problem_character_keyboard.dart';
 import 'settings_screen.dart';
 import 'training_log_screen.dart';
@@ -61,6 +64,7 @@ class TrainingScreen extends StatefulWidget {
     AnswerSpeaker? answerSpeaker,
     ResponseListener? responseListener,
     ProblemCharacterStore? problemCharacterStore,
+    EnrollmentStore? enrollmentStore,
     CountdownTimerStore? countdownTimerStore,
     TrainingLogStore? trainingLogStore,
     AppSettingsStore? appSettingsStore,
@@ -74,6 +78,7 @@ class TrainingScreen extends StatefulWidget {
        _injectedAnswerSpeaker = answerSpeaker,
        _injectedResponseListener = responseListener,
        _injectedProblemCharacterStore = problemCharacterStore,
+       _injectedEnrollmentStore = enrollmentStore,
        _injectedCountdownTimerStore = countdownTimerStore,
        _injectedTrainingLogStore = trainingLogStore,
        _injectedAppSettingsStore = appSettingsStore,
@@ -86,6 +91,7 @@ class TrainingScreen extends StatefulWidget {
   final AnswerSpeaker? _injectedAnswerSpeaker;
   final ResponseListener? _injectedResponseListener;
   final ProblemCharacterStore? _injectedProblemCharacterStore;
+  final EnrollmentStore? _injectedEnrollmentStore;
   final CountdownTimerStore? _injectedCountdownTimerStore;
   final TrainingLogStore? _injectedTrainingLogStore;
   final AppSettingsStore? _injectedAppSettingsStore;
@@ -166,6 +172,7 @@ class _TrainingScreenState extends State<TrainingScreen>
   late final AnswerSpeaker _answerSpeaker;
   late final ResponseListener _responseListener;
   late final ProblemCharacterStore _problemCharacterStore;
+  late final EnrollmentStore _enrollmentStore;
   late final CountdownTimerStore _countdownTimerStore;
   late final TrainingLogStore _trainingLogStore;
   late final AppSettingsStore _appSettingsStore;
@@ -187,6 +194,7 @@ class _TrainingScreenState extends State<TrainingScreen>
         widget._injectedResponseListener ?? SpeechToTextResponseListener();
     _problemCharacterStore =
         widget._injectedProblemCharacterStore ?? FileProblemCharacterStore();
+    _enrollmentStore = widget._injectedEnrollmentStore ?? FileEnrollmentStore();
     // Reflects a previously-saved problem-character set as the active
     // training set right from cold launch, not just for the rest of the
     // session it was entered in -- on-device testing showed a set that
@@ -668,6 +676,19 @@ class _TrainingScreenState extends State<TrainingScreen>
     setState(() => _problemCharacters = characters.isEmpty ? null : characters);
   }
 
+  // Milestone 13 step 2 (morse_icr_spec.md section 38): temporary debug
+  // entry point for voice enrollment, replacing step 1's "Mic Spike"
+  // trigger now that this is the real capture code it was validating.
+  // Not yet a real product entry point -- final placement is a product
+  // decision for step 4/5, once recognition is actually wired in.
+  Future<void> _openEnrollmentScreen() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => EnrollmentScreen(store: _enrollmentStore),
+      ),
+    );
+  }
+
   // Speech Recognition requires headphones (see [hasNonSpeakerAudioOutput]
   // for why) -- surfaced here rather than failing silently into the
   // self-echo false positives that motivated the requirement.
@@ -907,9 +928,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                               FilterChip(
                                 label: Text(type.label),
                                 showCheckmark: false,
-                                selected: _selectedCharacterSets.contains(
-                                  type,
-                                ),
+                                selected: _selectedCharacterSets.contains(type),
                                 selectedColor: colorScheme.primaryContainer,
                                 onSelected: _isTraining
                                     ? null
@@ -918,9 +937,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                                           if (selected) {
                                             _selectedCharacterSets.add(type);
                                           } else {
-                                            _selectedCharacterSets.remove(
-                                              type,
-                                            );
+                                            _selectedCharacterSets.remove(type);
                                           }
                                           // Selecting a chip at all --
                                           // even just deselecting one --
@@ -1037,6 +1054,14 @@ class _TrainingScreenState extends State<TrainingScreen>
                         ? _toggleTraining
                         : null,
                     child: Text(_isTraining ? 'Stop' : 'Start'),
+                  ),
+                  const SizedBox(height: 16),
+                  // Milestone 13 step 2 (morse_icr_spec.md section 38):
+                  // temporary trigger for [_openEnrollmentScreen] -- see
+                  // that method's doc comment.
+                  OutlinedButton(
+                    onPressed: () => unawaited(_openEnrollmentScreen()),
+                    child: const Text('Enroll'),
                   ),
                   const SizedBox(height: 16),
                   _DebugLogPanel(),

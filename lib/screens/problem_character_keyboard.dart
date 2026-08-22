@@ -3,16 +3,6 @@ import 'package:flutter/material.dart';
 import '../training/character_set.dart';
 import '../training/problem_character_store.dart';
 
-/// The full common Morse character set in one view (morse_icr_spec.md
-/// section 12) -- letters, numbers, and section 39's minimum punctuation
-/// set -- so building a problem-character list never requires switching
-/// between standard device keyboard layouts.
-final List<String> _allCharacters = [
-  ...characterSets[CharacterSetType.letters]!,
-  ...characterSets[CharacterSetType.numbers]!,
-  ...characterSets[CharacterSetType.punctuation]!,
-];
-
 /// Lets the learner build a problem-character set by tapping characters
 /// on and off (morse_icr_spec.md sections 11, 12, 39): one-tap toggle
 /// per character, with a visual indication (the same selected-chip
@@ -52,7 +42,7 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   }
 
   Future<void> _done() async {
-    // [_allCharacters]' own order, not selection order, so the
+    // [allCharacters]' own order, not selection order, so the
     // persisted/returned list is always in a stable, predictable order
     // regardless of which order the learner tapped characters in. Saved
     // (and returned) even when empty -- Clear-then-Done is how the
@@ -63,7 +53,7 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
     // active-count indicator ever actually changed). [TrainingScreen]
     // is what turns an empty list back into "no problem set active."
     final characters = [
-      for (final character in _allCharacters)
+      for (final character in allCharacters)
         if (_selected.contains(character)) character,
     ];
     await widget.store.save(characters);
@@ -114,7 +104,7 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        for (final character in _allCharacters)
+                        for (final character in allCharacters)
                           FilterChip(
                             label: Text(character),
                             showCheckmark: false,
