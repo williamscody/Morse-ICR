@@ -6,15 +6,22 @@ import 'package:path_provider/path_provider.dart';
 import 'enrollment_store.dart';
 import 'spoken_character.dart';
 
-/// Persists each character's reference recording as a raw-PCM16 file in
-/// its own subdirectory of the app documents directory (morse_icr_spec.md
+/// Persists each character's reference takes as raw-PCM16 files in its
+/// own subdirectory of the app documents directory (morse_icr_spec.md
 /// section 38) -- the same [path_provider]-backed approach
 /// `FileProblemCharacterStore` already uses.
 ///
 /// Characters can't always be used as filenames directly (`/` isn't
 /// valid in a filename on any platform this app targets), so filenames
-/// reuse [spokenNames] (e.g. `.` -> "dot.pcm16", `/` -> "slash.pcm16")
-/// rather than inventing a second character-to-string mapping.
+/// reuse [spokenNames] (e.g. `.` -> "dot", `/` -> "slash") rather than
+/// inventing a second character-to-string mapping. Each take is its own
+/// file, `{name}_{index}.pcm16` (0-based) -- moved from one file per
+/// character (Milestone 13, 2026-08-22) alongside [EnrollmentStore]'s
+/// interface change to multiple takes. A previous single-take
+/// enrollment's `{name}.pcm16` file (no index suffix) is simply
+/// orphaned by this change, not migrated -- it's unread by the new
+/// `_0`/`_1`/... lookup, and re-enrolling is needed anyway to benefit
+/// from multiple takes.
 class FileEnrollmentStore implements EnrollmentStore {
   static const _dirName = 'enrollment';
 
@@ -24,23 +31,41 @@ class FileEnrollmentStore implements EnrollmentStore {
     if (!await directory.exists()) return {};
     final result = <String>{};
     for (final character in spokenNames.keys) {
-      if (await (await _file(character)).exists()) result.add(character);
+      if (await (await _file(character, 0)).exists()) result.add(character);
     }
     return result;
   }
 
   @override
-  Future<void> saveRecording(String character, Uint8List pcm16) async {
+  Future<void> saveRecordings(
+    String character,
+    List<Uint8List> pcm16Takes,
+  ) async {
     final directory = await _directory();
     if (!await directory.exists()) await directory.create(recursive: true);
-    await (await _file(character)).writeAsBytes(pcm16);
+    // Clears any previously-saved takes first, so re-enrolling with
+    // fewer takes than before (e.g. after _takesPerCharacter changes)
+    // never leaves a stale extra file behind for [loadRecordings]'s
+    // scan-until-missing to pick up.
+    for (var index = 0; ; index++) {
+      final file = await _file(character, index);
+      if (!await file.exists()) break;
+      await file.delete();
+    }
+    for (var index = 0; index < pcm16Takes.length; index++) {
+      await (await _file(character, index)).writeAsBytes(pcm16Takes[index]);
+    }
   }
 
   @override
-  Future<Uint8List?> loadRecording(String character) async {
-    final file = await _file(character);
-    if (!await file.exists()) return null;
-    return file.readAsBytes();
+  Future<List<Uint8List>> loadRecordings(String character) async {
+    final takes = <Uint8List>[];
+    for (var index = 0; ; index++) {
+      final file = await _file(character, index);
+      if (!await file.exists()) break;
+      takes.add(await file.readAsBytes());
+    }
+    return takes;
   }
 
   Future<Directory> _directory() async {
@@ -48,9 +73,9 @@ class FileEnrollmentStore implements EnrollmentStore {
     return Directory('${documents.path}/$_dirName');
   }
 
-  Future<File> _file(String character) async {
+  Future<File> _file(String character, int index) async {
     final directory = await _directory();
     final name = spokenNames[character.toUpperCase()] ?? character;
-    return File('${directory.path}/$name.pcm16');
+    return File('${directory.path}/${name}_$index.pcm16');
   }
 }

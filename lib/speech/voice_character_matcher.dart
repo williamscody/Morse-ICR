@@ -18,7 +18,14 @@ const double placeholderMaxDistance = 40.0;
 /// Matches a freshly-recorded clip against the learner's enrolled
 /// reference recordings (morse_icr_spec.md section 38), via MFCC
 /// feature extraction ([extractMfcc]) and dynamic time warping
-/// ([dtwDistance]) against every enrolled character.
+/// ([dtwDistance]) against every take of every enrolled character,
+/// keeping the closest take per character -- "best-of-N templates",
+/// standard for a multi-exemplar nearest-template matcher. Moved from
+/// one take per character to this (Milestone 13, 2026-08-22) after
+/// on-device data showed a single take made matching sensitive to that
+/// one recording's own noise (mic distance, background noise, momentary
+/// vocal variation) rather than the character's actual acoustic
+/// signature.
 class VoiceCharacterMatcher {
   VoiceCharacterMatcher(this._store);
 
@@ -28,11 +35,12 @@ class VoiceCharacterMatcher {
   // [match] used to re-run MFCC extraction on every enrolled character
   // on every single call -- on-device profiling (Milestone 13,
   // 2026-08-21) found this was ~85% of total match cost at a
-  // 40-character enrollment. Cached per character, populated lazily on
-  // first use; [invalidateCache] drops it so a session that starts
-  // after re-enrollment (via Settings' "Personalize Recognition")
-  // doesn't keep matching against stale features.
-  final Map<String, List<List<double>>> _referenceFeatureCache = {};
+  // 40-character enrollment. Cached per character (one entry per
+  // enrolled take), populated lazily on first use; [invalidateCache]
+  // drops it so a session that starts after re-enrollment (via
+  // Settings' "Personalize Recognition") doesn't keep matching against
+  // stale features.
+  final Map<String, List<MfccSequence>> _referenceFeatureCache = {};
 
   /// Drops any cached reference features -- call at the start of a new
   /// listening session so re-enrollment since the last one is reflected.
@@ -63,6 +71,7 @@ class VoiceCharacterMatcher {
     String? bestCharacter;
     var bestDistance = double.infinity;
     var referenceCount = 0;
+    var referenceTakeCount = 0;
     var referenceMfccMicros = 0;
     var dtwMicros = 0;
     final loopStopwatch = Stopwatch()..start();
@@ -70,20 +79,27 @@ class VoiceCharacterMatcher {
       if (candidates != null && !candidates.contains(character)) continue;
 
       final refMfccStopwatch = Stopwatch()..start();
-      final referenceFeatures = await _referenceFeaturesFor(character);
+      final referenceTakes = await _referenceFeaturesFor(character);
       refMfccStopwatch.stop();
       referenceMfccMicros += refMfccStopwatch.elapsedMicroseconds;
-      if (referenceFeatures == null || referenceFeatures.isEmpty) continue;
+      if (referenceTakes.isEmpty) continue;
       referenceCount++;
+      referenceTakeCount += referenceTakes.length;
 
-      final dtwStopwatch = Stopwatch()..start();
-      final distance = dtwDistance(queryFeatures, referenceFeatures);
-      dtwStopwatch.stop();
-      dtwMicros += dtwStopwatch.elapsedMicroseconds;
+      // Best-of-N: this character's distance is however close its
+      // *closest* enrolled take is, not an average -- a query only
+      // needs to resemble one genuine take of a character, not all of
+      // them (different takes legitimately vary in pace/emphasis).
+      for (final referenceFeatures in referenceTakes) {
+        final dtwStopwatch = Stopwatch()..start();
+        final distance = dtwDistance(queryFeatures, referenceFeatures);
+        dtwStopwatch.stop();
+        dtwMicros += dtwStopwatch.elapsedMicroseconds;
 
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestCharacter = character;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestCharacter = character;
+        }
       }
     }
     loopStopwatch.stop();
@@ -95,6 +111,7 @@ class VoiceCharacterMatcher {
     // logs. Remove once the resulting optimization work lands.
     logDebug(
       'voice: match breakdown -- n=$referenceCount '
+      'refTakes=$referenceTakeCount '
       'queryMfcc=${queryMfccStopwatch.elapsedMilliseconds}ms '
       'refMfcc=${referenceMfccMicros ~/ 1000}ms '
       'dtw=${dtwMicros ~/ 1000}ms '
@@ -126,12 +143,11 @@ class VoiceCharacterMatcher {
     return count == 0 ? 0 : sum / count;
   }
 
-  Future<List<List<double>>?> _referenceFeaturesFor(String character) async {
+  Future<List<MfccSequence>> _referenceFeaturesFor(String character) async {
     final cached = _referenceFeatureCache[character];
     if (cached != null) return cached;
-    final reference = await _store.loadRecording(character);
-    if (reference == null) return null;
-    final features = extractMfcc(reference);
+    final takes = await _store.loadRecordings(character);
+    final features = [for (final take in takes) extractMfcc(take)];
     _referenceFeatureCache[character] = features;
     return features;
   }

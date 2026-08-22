@@ -16,6 +16,12 @@ const int _deltaWindow = 2; // frames each side, standard regression delta
 /// have to duplicate this as a magic number.
 const int mfccStaticCoefficientCount = _coefficientCount;
 
+/// [extractMfcc]'s return shape -- one feature vector per analysis
+/// frame -- named so callers holding several of these (e.g.
+/// `VoiceCharacterMatcher`'s multiple enrolled takes per character)
+/// don't have to spell out the doubly-nested `List<List<double>>`.
+typedef MfccSequence = List<List<double>>;
+
 /// Extracts MFCC (mel-frequency cepstral coefficient) features from a
 /// raw PCM16 mono clip (morse_icr_spec.md section 38's "dynamic time
 /// warping over MFCC/mel-spectrogram features" approach): one
@@ -32,7 +38,20 @@ const int mfccStaticCoefficientCount = _coefficientCount;
 /// matching as needing on-device investigation rather than a finished
 /// design. [sampleRate] defaults to 16000Hz to match the capture rate
 /// established in Milestone 13 step 1's on-device mic spike.
-List<List<double>> extractMfcc(Uint8List pcm16, {int sampleRate = 16000}) {
+///
+/// [_coefficientCount] was tried at 20 (Milestone 13, 2026-08-22) to
+/// capture finer spectral detail for confusable pairs (M/N, I/Y, P/Q)
+/// still surviving CMN plus magnitude-weighted deltas, then reverted:
+/// on-device accuracy got *worse* (1/9 vs. 2/8 at 13), with static
+/// coefficient magnitudes visibly smaller across the board (~4.2-4.7
+/// vs. ~6-7) -- the higher-order coefficients carry little energy and
+/// are more sensitive to take-to-take recording variation (mic
+/// distance, background noise) than to phonetic content, which single-
+/// take enrollment can't average out. More coefficients only helps once
+/// references are robust to that variation -- multi-take enrollment
+/// (Milestone 13, 2026-08-22: `EnrollmentStore.saveRecordings`) is that
+/// fix, adding them first just added noise.
+MfccSequence extractMfcc(Uint8List pcm16, {int sampleRate = 16000}) {
   final samples = _decodePcm16(pcm16);
   if (samples.length < _frameLength) return [];
 

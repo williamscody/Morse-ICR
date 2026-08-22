@@ -7,24 +7,27 @@ import 'package:morse_icr/speech/voice_character_matcher.dart';
 import 'test_audio.dart';
 
 class _FakeEnrollmentStore implements EnrollmentStore {
-  _FakeEnrollmentStore([Map<String, Uint8List>? recordings])
+  _FakeEnrollmentStore([Map<String, List<Uint8List>>? recordings])
     : recordings = recordings ?? {};
 
-  final Map<String, Uint8List> recordings;
-  int loadRecordingCalls = 0;
+  final Map<String, List<Uint8List>> recordings;
+  int loadRecordingsCalls = 0;
 
   @override
   Future<Set<String>> enrolledCharacters() async => recordings.keys.toSet();
 
   @override
-  Future<void> saveRecording(String character, Uint8List pcm16) async {
-    recordings[character] = pcm16;
+  Future<void> saveRecordings(
+    String character,
+    List<Uint8List> pcm16Takes,
+  ) async {
+    recordings[character] = pcm16Takes;
   }
 
   @override
-  Future<Uint8List?> loadRecording(String character) async {
-    loadRecordingCalls++;
-    return recordings[character];
+  Future<List<Uint8List>> loadRecordings(String character) async {
+    loadRecordingsCalls++;
+    return recordings[character] ?? [];
   }
 }
 
@@ -32,8 +35,8 @@ void main() {
   group('VoiceCharacterMatcher', () {
     test('matches the query to the closest enrolled character', () async {
       final store = _FakeEnrollmentStore({
-        'A': sineWavePcm16(300),
-        'B': sineWavePcm16(900),
+        'A': [sineWavePcm16(300)],
+        'B': [sineWavePcm16(900)],
       });
       final matcher = VoiceCharacterMatcher(store);
 
@@ -47,7 +50,9 @@ void main() {
     });
 
     test('returns null when nothing enrolled is close enough', () async {
-      final store = _FakeEnrollmentStore({'A': sineWavePcm16(300)});
+      final store = _FakeEnrollmentStore({
+        'A': [sineWavePcm16(300)],
+      });
       final matcher = VoiceCharacterMatcher(store);
 
       final query = whiteNoisePcm16();
@@ -69,8 +74,8 @@ void main() {
       'candidates restricts matching to a subset of enrolled characters',
       () async {
         final store = _FakeEnrollmentStore({
-          'A': sineWavePcm16(300),
-          'B': sineWavePcm16(900),
+          'A': [sineWavePcm16(300)],
+          'B': [sineWavePcm16(900)],
         });
         final matcher = VoiceCharacterMatcher(store);
         // Closest to 'A', but 'A' isn't a candidate -- the active
@@ -94,20 +99,42 @@ void main() {
     test(
       'caches reference recordings across matches, until invalidated',
       () async {
-        final store = _FakeEnrollmentStore({'A': sineWavePcm16(300)});
+        final store = _FakeEnrollmentStore({
+          'A': [sineWavePcm16(300)],
+        });
         final matcher = VoiceCharacterMatcher(store);
         final query = sineWavePcm16(300, durationSeconds: 0.55);
 
         await matcher.match(query, maxDistance: 1000);
         await matcher.match(query, maxDistance: 1000);
 
-        expect(store.loadRecordingCalls, 1);
+        expect(store.loadRecordingsCalls, 1);
 
         matcher.invalidateCache();
         await matcher.match(query, maxDistance: 1000);
 
-        expect(store.loadRecordingCalls, 2);
+        expect(store.loadRecordingsCalls, 2);
       },
     );
+
+    test('matches on the closest of a character\'s several enrolled takes, '
+        'not just its first', () async {
+      final store = _FakeEnrollmentStore({
+        // 'A's first take is too short to produce any MFCC frames
+        // (extractMfcc returns []), so dtwDistance against it is
+        // always infinity -- a real match can only happen by
+        // considering the second, genuinely close take too. Stands in
+        // for "different takes of the same character legitimately
+        // vary in quality/pace, and a query should only need to
+        // resemble one of them."
+        'A': [Uint8List(10), sineWavePcm16(300)],
+      });
+      final matcher = VoiceCharacterMatcher(store);
+      final query = sineWavePcm16(300, durationSeconds: 0.55);
+
+      final result = await matcher.match(query, maxDistance: 1000);
+
+      expect(result, 'A');
+    });
   });
 }
