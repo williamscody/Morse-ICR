@@ -15,6 +15,7 @@ import '../speech/file_enrollment_store.dart';
 import '../speech/response_listener.dart';
 import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
+import '../speech/voice_response_listener.dart';
 import '../training/app_settings.dart';
 import '../training/app_settings_store.dart';
 import '../training/character_set.dart';
@@ -676,6 +677,24 @@ class _TrainingScreenState extends State<TrainingScreen>
     setState(() => _problemCharacters = characters.isEmpty ? null : characters);
   }
 
+  // Milestone 13 step 4 (morse_icr_spec.md section 38): temporary
+  // on-device trial for VoiceResponseListener + UtteranceEndpointer --
+  // runs real-time recognition against the learner's enrolled voice for
+  // 10s, logging every match via [logDebug] so Bill can judge VAD/
+  // matching quality (and tune their placeholder thresholds) before
+  // step 5 makes this TrainingScreen's production listener. Delete
+  // alongside its button once step 5 lands.
+  Future<void> _runVoiceTest() async {
+    final listener = VoiceResponseListener();
+    logDebug('voice test: starting (10s)');
+    await listener.startListening(
+      (character) => logDebug('voice test: heard "$character"'),
+    );
+    await Future<void>.delayed(const Duration(seconds: 10));
+    await listener.stopListening();
+    logDebug('voice test: done');
+  }
+
   // Milestone 13 step 2 (morse_icr_spec.md section 38): temporary debug
   // entry point for voice enrollment, replacing step 1's "Mic Spike"
   // trigger now that this is the real capture code it was validating.
@@ -1062,6 +1081,14 @@ class _TrainingScreenState extends State<TrainingScreen>
                   OutlinedButton(
                     onPressed: () => unawaited(_openEnrollmentScreen()),
                     child: const Text('Enroll'),
+                  ),
+                  const SizedBox(height: 16),
+                  // Milestone 13 step 4 (morse_icr_spec.md section 38):
+                  // temporary trigger for [_runVoiceTest] -- see that
+                  // method's doc comment.
+                  OutlinedButton(
+                    onPressed: () => unawaited(_runVoiceTest()),
+                    child: const Text('Voice Test (10s)'),
                   ),
                   const SizedBox(height: 16),
                   _DebugLogPanel(),

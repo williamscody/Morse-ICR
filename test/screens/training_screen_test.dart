@@ -166,8 +166,7 @@ void main() {
       responseListener: responseListener ?? _FakeResponseListener(),
       problemCharacterStore:
           problemCharacterStore ?? _FakeProblemCharacterStore(),
-      countdownTimerStore:
-          countdownTimerStore ?? _FakeCountdownTimerStore(),
+      countdownTimerStore: countdownTimerStore ?? _FakeCountdownTimerStore(),
       trainingLogStore: trainingLogStore ?? _FakeTrainingLogStore(),
       headphonesConnectedCheck: () async => true,
       reconfigureAudioSessionOnStart: () async {},
@@ -388,7 +387,7 @@ void main() {
             answerSpeaker: _FakeSpeaker(),
             responseListener: _FakeResponseListener(),
             trainingLogStore: _FakeTrainingLogStore(),
-          headphonesConnectedCheck: () async => true,
+            headphonesConnectedCheck: () async => true,
             // Simulates a slow real platform call landing between the
             // button optimistically flipping to "Stop" and the engine
             // actually starting.
@@ -544,7 +543,7 @@ void main() {
             answerSpeaker: _FakeSpeaker(),
             responseListener: listener,
             trainingLogStore: _FakeTrainingLogStore(),
-          headphonesConnectedCheck: () async => true,
+            headphonesConnectedCheck: () async => true,
             reconfigureAudioSessionOnStart: () async {},
             activateAudioSessionOnStart: () async {},
             deactivateAudioSessionOnStop: () async {},
@@ -763,8 +762,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Focus (2 active)'), findsOneWidget);
 
+      // The Focus button sits below the character-set chips, so
+      // ensureVisible-ing it earlier can scroll far enough that the
+      // chips themselves end up behind the AppBar -- ensure A-Z is back
+      // in view before tapping it, rather than relying on incidental
+      // scroll position.
+      await tester.ensureVisible(find.text('A-Z'));
       await tester.tap(find.text('A-Z')); // deselect the only active chip
       await tester.pump();
+      await tester.ensureVisible(find.text('A-Z'));
       await tester.tap(find.text('A-Z')); // reselect it
       await tester.pump();
 
@@ -899,7 +905,10 @@ void main() {
     'it reaches zero, and restores the display to the configured duration',
     (tester) async {
       final store = _FakeCountdownTimerStore(
-        const CountdownTimerConfig(slotSeconds: [3, null, null], selectedSlot: 0),
+        const CountdownTimerConfig(
+          slotSeconds: [3, null, null],
+          selectedSlot: 0,
+        ),
       );
       await tester.pumpWidget(wrapTraining(countdownTimerStore: store));
       await tester.pump();
@@ -950,35 +959,32 @@ void main() {
     },
   );
 
-  testWidgets(
-    'manually stopping records a training-log entry with the active '
-    'character set as its focus summary',
-    (tester) async {
-      final logStore = _FakeTrainingLogStore();
-      await tester.pumpWidget(wrapTraining(trainingLogStore: logStore));
+  testWidgets('manually stopping records a training-log entry with the active '
+      'character set as its focus summary', (tester) async {
+    final logStore = _FakeTrainingLogStore();
+    await tester.pumpWidget(wrapTraining(trainingLogStore: logStore));
 
-      await tester.ensureVisible(find.text('Start'));
-      await tester.tap(find.text('Start'));
-      await tester.pump();
-      await tester.tap(find.text('Stop'));
-      await tester.pump();
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
 
-      expect(logStore.saved, hasLength(1));
-      final record = logStore.saved.single;
-      expect(record.focusSummary, 'A-Z');
-      // Default Character Speed/Recognition Time/Extra Gap
-      // (training_screen.dart's own initial field values).
-      expect(record.wpm, 90);
-      expect(record.recognitionTimeMs, 500);
-      expect(record.extraGapMs, 0);
-      // A manual stop's recorded duration is real wall-clock elapsed
-      // time (morse_icr_spec.md section 22), not a virtualized Timer --
-      // `tester.pump(duration)` only advances scheduled Timers/frames,
-      // not `DateTime.now()`, so this only asserts it's a real,
-      // non-negative measurement rather than a specific value.
-      expect(record.duration, greaterThanOrEqualTo(Duration.zero));
-    },
-  );
+    expect(logStore.saved, hasLength(1));
+    final record = logStore.saved.single;
+    expect(record.focusSummary, 'A-Z');
+    // Default Character Speed/Recognition Time/Extra Gap
+    // (training_screen.dart's own initial field values).
+    expect(record.wpm, 90);
+    expect(record.recognitionTimeMs, 500);
+    expect(record.extraGapMs, 0);
+    // A manual stop's recorded duration is real wall-clock elapsed
+    // time (morse_icr_spec.md section 22), not a virtualized Timer --
+    // `tester.pump(duration)` only advances scheduled Timers/frames,
+    // not `DateTime.now()`, so this only asserts it's a real,
+    // non-negative measurement rather than a specific value.
+    expect(record.duration, greaterThanOrEqualTo(Duration.zero));
+  });
 
   testWidgets(
     'the log records the speed/recognition-time/gap settings in effect '
@@ -1011,54 +1017,45 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a problem-character set active at Stop is recorded as the focus '
-    'summary instead of the character-set chips',
-    (tester) async {
-      final logStore = _FakeTrainingLogStore();
-      final problemStore = _FakeProblemCharacterStore()..saved = ['K', 'R'];
-      await tester.pumpWidget(
-        wrapTraining(
-          trainingLogStore: logStore,
-          problemCharacterStore: problemStore,
-        ),
-      );
-      await tester.pump(); // let cold-launch problem-set activation settle
+  testWidgets('a problem-character set active at Stop is recorded as the focus '
+      'summary instead of the character-set chips', (tester) async {
+    final logStore = _FakeTrainingLogStore();
+    final problemStore = _FakeProblemCharacterStore()..saved = ['K', 'R'];
+    await tester.pumpWidget(
+      wrapTraining(
+        trainingLogStore: logStore,
+        problemCharacterStore: problemStore,
+      ),
+    );
+    await tester.pump(); // let cold-launch problem-set activation settle
 
-      await tester.ensureVisible(find.text('Start'));
-      await tester.tap(find.text('Start'));
-      await tester.pump();
-      await tester.tap(find.text('Stop'));
-      await tester.pump();
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
 
-      expect(logStore.saved.single.focusSummary, 'K R');
-    },
-  );
+    expect(logStore.saved.single.focusSummary, 'K R');
+  });
 
-  testWidgets(
-    'the countdown timer reaching zero records the timer\'s full '
-    'configured duration, not a wall-clock elapsed time a shade short '
-    'of it',
-    (tester) async {
-      final logStore = _FakeTrainingLogStore();
-      final timerStore = _FakeCountdownTimerStore(
-        const CountdownTimerConfig(slotSeconds: [3, null, null], selectedSlot: 0),
-      );
-      await tester.pumpWidget(
-        wrapTraining(
-          trainingLogStore: logStore,
-          countdownTimerStore: timerStore,
-        ),
-      );
-      await tester.pump();
+  testWidgets('the countdown timer reaching zero records the timer\'s full '
+      'configured duration, not a wall-clock elapsed time a shade short '
+      'of it', (tester) async {
+    final logStore = _FakeTrainingLogStore();
+    final timerStore = _FakeCountdownTimerStore(
+      const CountdownTimerConfig(slotSeconds: [3, null, null], selectedSlot: 0),
+    );
+    await tester.pumpWidget(
+      wrapTraining(trainingLogStore: logStore, countdownTimerStore: timerStore),
+    );
+    await tester.pump();
 
-      await tester.ensureVisible(find.text('Start'));
-      await tester.tap(find.text('Start'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump(); // let the auto-stop's async work settle
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(); // let the auto-stop's async work settle
 
-      expect(logStore.saved.single.duration, const Duration(seconds: 3));
-    },
-  );
+    expect(logStore.saved.single.duration, const Duration(seconds: 3));
+  });
 }
