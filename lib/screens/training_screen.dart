@@ -128,6 +128,11 @@ class _TrainingScreenState extends State<TrainingScreen>
   // zero or the learner tapping Stop).
   Duration? _countdownRemaining;
   Timer? _countdownTicker;
+  // Counts up while a session is running, next to "Training…" -- reset
+  // to zero the moment Stop (manual or countdown-triggered) tears the
+  // session down, same lifecycle as [_countdownTicker].
+  Duration _elapsedTime = Duration.zero;
+  Timer? _elapsedTicker;
   bool _isTraining = false;
   // Not shown in the UI -- tracked ahead of character-level statistics
   // (Milestone 15), which will need a played-character count. Not part
@@ -278,6 +283,7 @@ class _TrainingScreenState extends State<TrainingScreen>
     WidgetsBinding.instance.removeObserver(this);
     _resumeDebounceTimer?.cancel();
     _countdownTicker?.cancel();
+    _elapsedTicker?.cancel();
     _trainingEngine.stop();
     _turnAudioEngine?.dispose();
     _keepAliveLoop?.dispose();
@@ -428,6 +434,7 @@ class _TrainingScreenState extends State<TrainingScreen>
       trainingAudioHandler?.reportIdle();
       await _recordCompletedSession(recordedDuration);
       _cancelCountdownTicker();
+      _cancelElapsedTicker();
       setState(() {
         _isTraining = false;
         // Reset to the memory's stored duration rather than leaving the
@@ -437,6 +444,7 @@ class _TrainingScreenState extends State<TrainingScreen>
         // back to the selected memory's stored duration whenever
         // [_countdownRemaining] is null.
         _countdownRemaining = null;
+        _elapsedTime = Duration.zero;
       });
       logDebug('stop: done');
       return;
@@ -459,8 +467,10 @@ class _TrainingScreenState extends State<TrainingScreen>
     setState(() {
       _isTraining = true;
       _charactersPlayed = 0;
+      _elapsedTime = Duration.zero;
     });
     _startCountdownTicker();
+    _startElapsedTicker();
     // [_reactivateAudioSession] only reconfigures on resume if a
     // session was already running (so it doesn't wake up an idle
     // session behind the learner's back) -- but that means a session
@@ -604,6 +614,21 @@ class _TrainingScreenState extends State<TrainingScreen>
   void _cancelCountdownTicker() {
     _countdownTicker?.cancel();
     _countdownTicker = null;
+  }
+
+  void _startElapsedTicker() {
+    _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      final startedAt = _sessionStartedAt;
+      if (startedAt == null) return;
+      if (mounted) {
+        setState(() => _elapsedTime = DateTime.now().difference(startedAt));
+      }
+    });
+  }
+
+  void _cancelElapsedTicker() {
+    _elapsedTicker?.cancel();
+    _elapsedTicker = null;
   }
 
   // What the main-screen timer row shows: the live countdown while one
@@ -780,7 +805,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                           label: 'Character Speed',
                           value: _wpm,
                           min: 15,
-                          max: 150,
+                          max: 120,
                           step: 1,
                           suffix: 'WPM',
                           onChanged: (v) {
@@ -970,6 +995,15 @@ class _TrainingScreenState extends State<TrainingScreen>
                                 ),
                           ),
                           if (_isTraining) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              formatCountdown(_elapsedTime),
+                              key: const Key('elapsedTimeDisplay'),
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
+                                    color: colorScheme.onTertiaryContainer,
+                                  ),
+                            ),
                             const SizedBox(width: 8),
                             SizedBox(
                               key: const Key('correctResponseIndicator'),

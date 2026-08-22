@@ -235,9 +235,14 @@ class _SessionRowState extends State<_SessionRow> {
             _Cell('Date', formatSessionDate(record.startedAt)),
             _Cell('Time', formatSessionTime(record.startedAt)),
             _Cell('Duration', formatSessionDuration(record.duration)),
-            _Cell('Focus', record.focusSummary),
           ],
         ),
+        const SizedBox(height: 8),
+        // Its own row, full-width -- a long character-set focus summary
+        // squeezed into the Date/Time/Duration row above pushed those
+        // cells together until they visually collided (Bill, on-device,
+        // after seeing several problem characters selected at once).
+        _Cell('Focus', record.focusSummary),
         const SizedBox(height: 8),
         // A second row for the settings the session started at (too
         // crowded to fit alongside Date/Time/Duration/Focus in one row --

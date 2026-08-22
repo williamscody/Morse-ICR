@@ -275,7 +275,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(find.text('Character Speed: 150 WPM'), findsOneWidget);
+    expect(find.text('Character Speed: 120 WPM'), findsOneWidget);
   });
 
   testWidgets('character set chips are multi-selectable', (tester) async {
