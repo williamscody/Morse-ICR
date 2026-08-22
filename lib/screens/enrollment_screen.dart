@@ -66,6 +66,15 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
           ),
         ),
       );
+    } on NoSpeechDetected {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Didn't catch that -- speak right after tapping, then try again.",
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _recordingCharacter = null);
     }

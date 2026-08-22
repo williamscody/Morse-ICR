@@ -8,28 +8,123 @@ const int _hopLength = 160; // 10ms at 16kHz
 const int _fftSize = 512; // next power of two >= _frameLength
 const int _melFilterCount = 26;
 const int _coefficientCount = 13;
+const int _deltaWindow = 2; // frames each side, standard regression delta
+
+/// How many static coefficients lead each feature vector before its
+/// delta counterparts -- public so callers that need to distinguish the
+/// two (e.g. weighting them separately in a distance calculation) don't
+/// have to duplicate this as a magic number.
+const int mfccStaticCoefficientCount = _coefficientCount;
 
 /// Extracts MFCC (mel-frequency cepstral coefficient) features from a
 /// raw PCM16 mono clip (morse_icr_spec.md section 38's "dynamic time
-/// warping over MFCC/mel-spectrogram features" approach), one 13-value
-/// coefficient vector per ~25ms analysis frame.
+/// warping over MFCC/mel-spectrogram features" approach): one
+/// 26-value vector per ~25ms analysis frame -- 13 static coefficients
+/// (cepstral-mean-normalized) plus their 13 delta (rate-of-change)
+/// counterparts.
 ///
-/// Deliberately simple -- no deltas, no pre-emphasis tuning beyond the
-/// standard framing/windowing -- since section 38 flags matching as
-/// needing on-device investigation rather than a finished design.
-/// [sampleRate] defaults to 16000Hz to match the capture rate
+/// Deltas were added after on-device data (Milestone 13, 2026-08-21)
+/// showed the matcher's specific errors were classic confusable
+/// consonant pairs (B/V, K/Q, L/R) -- ones that mostly differ in how a
+/// sound *transitions*, not its static per-frame shape, which is
+/// exactly what a static-only feature vector misses. Still simple --
+/// no delta-delta, no pre-emphasis tuning -- since section 38 flags
+/// matching as needing on-device investigation rather than a finished
+/// design. [sampleRate] defaults to 16000Hz to match the capture rate
 /// established in Milestone 13 step 1's on-device mic spike.
 List<List<double>> extractMfcc(Uint8List pcm16, {int sampleRate = 16000}) {
   final samples = _decodePcm16(pcm16);
   if (samples.length < _frameLength) return [];
 
-  final filterbank = _melFilterbank(sampleRate);
-  final window = _hammingWindow(_frameLength);
+  final filterbank = _melFilterbankFor(sampleRate);
+  final window = _hammingWindow;
   final frameCount = 1 + (samples.length - _frameLength) ~/ _hopLength;
 
-  return [
+  final frames = [
     for (var frame = 0; frame < frameCount; frame++)
       _mfccForFrame(samples, frame * _hopLength, window, filterbank),
+  ];
+  final normalized = _cepstralMeanNormalize(frames);
+  return _addDeltas(normalized);
+}
+
+// On-device measurement (Milestone 13, 2026-08-21) found delta
+// coefficients average ~6-7x smaller in magnitude than static ones
+// (deltas are frame-to-frame *differences*, statics are raw post-CMN
+// values) -- in DTW's unweighted per-frame Euclidean distance, that
+// made deltas contribute roughly 1/50th as much as statics to the
+// total, a near no-op despite being computed correctly. Scaling deltas
+// by this ratio so they actually influence matching the way they're
+// meant to -- still an empirically-derived placeholder like every
+// other threshold in this file, not a tuned final value.
+const double _deltaWeight = 7.0;
+
+// Standard regression-based delta (rate-of-change) computation over a
+// +-[_deltaWindow]-frame neighborhood, appended to each frame's static
+// coefficients. Edge frames clamp to the nearest valid frame rather
+// than padding with zeros, so the clip's actual start/end still
+// contributes real (if asymmetric) derivative information.
+List<List<double>> _addDeltas(List<List<double>> frames) {
+  if (frames.isEmpty) return frames;
+  final frameCount = frames.length;
+  final coefficientCount = frames.first.length;
+  var denominator = 0;
+  for (var n = 1; n <= _deltaWindow; n++) {
+    denominator += n * n;
+  }
+  denominator *= 2;
+
+  return [
+    for (var t = 0; t < frameCount; t++)
+      [
+        ...frames[t],
+        for (var c = 0; c < coefficientCount; c++)
+          _deltaWeight * _delta(frames, t, c, frameCount, denominator),
+      ],
+  ];
+}
+
+double _delta(
+  List<List<double>> frames,
+  int t,
+  int c,
+  int frameCount,
+  int denominator,
+) {
+  var sum = 0.0;
+  for (var n = 1; n <= _deltaWindow; n++) {
+    final after = frames[math.min(t + n, frameCount - 1)][c];
+    final before = frames[math.max(t - n, 0)][c];
+    sum += n * (after - before);
+  }
+  return sum / denominator;
+}
+
+/// Subtracts each coefficient's mean (across every frame of this one
+/// clip) from every frame -- cepstral mean normalization, a standard
+/// speech-recognition preprocessing step. Removes systematic per-clip
+/// bias (e.g. differing gain/distance-from-mic between Bill's
+/// enrollment session and a later live query) before DTW ever compares
+/// two clips, rather than leaving that bias baked into every
+/// coefficient. Added after on-device data (Milestone 13, 2026-08-21)
+/// showed matches were confidently wrong as often as confidently right
+/// -- distance alone wasn't separating correct from incorrect matches,
+/// suggesting exactly this kind of systematic offset.
+List<List<double>> _cepstralMeanNormalize(List<List<double>> frames) {
+  if (frames.isEmpty) return frames;
+  final coefficientCount = frames.first.length;
+  final means = List<double>.filled(coefficientCount, 0);
+  for (final frame in frames) {
+    for (var i = 0; i < coefficientCount; i++) {
+      means[i] += frame[i];
+    }
+  }
+  for (var i = 0; i < coefficientCount; i++) {
+    means[i] /= frames.length;
+  }
+  return [
+    for (final frame in frames)
+      [for (var i = 0; i < coefficientCount; i++) frame[i] - means[i]],
   ];
 }
 
@@ -42,9 +137,11 @@ List<double> _decodePcm16(Uint8List bytes) {
   ];
 }
 
-List<double> _hammingWindow(int length) => [
-  for (var n = 0; n < length; n++)
-    0.54 - 0.46 * math.cos(2 * math.pi * n / (length - 1)),
+// Depends only on [_frameLength], which never varies -- computed once
+// and reused, rather than rebuilt per clip.
+final List<double> _hammingWindow = [
+  for (var n = 0; n < _frameLength; n++)
+    0.54 - 0.46 * math.cos(2 * math.pi * n / (_frameLength - 1)),
 ];
 
 List<double> _mfccForFrame(
@@ -70,7 +167,7 @@ List<double> _mfccForFrame(
       math.log(math.max(_dot(filter, magnitude), 1e-10)),
   ];
 
-  return _dct(logMelEnergies, _coefficientCount);
+  return _dct(logMelEnergies);
 }
 
 double _dot(List<double> a, List<double> b) {
@@ -81,17 +178,36 @@ double _dot(List<double> a, List<double> b) {
   return sum;
 }
 
-/// DCT-II of [input], keeping the first [coefficientCount] coefficients
-/// -- the standard log-mel-energy -> cepstral-coefficient step.
-List<double> _dct(List<double> input, int coefficientCount) {
-  final n = input.length;
-  return [
-    for (var k = 0; k < coefficientCount; k++)
-      _dot(input, [
-        for (var m = 0; m < n; m++) math.cos(math.pi / n * (m + 0.5) * k),
-      ]),
-  ];
-}
+// The DCT-II basis matrix depends only on [_melFilterCount] and
+// [_coefficientCount], both fixed constants -- computed once for the
+// process lifetime rather than rebuilt (with a fresh `cos()` call per
+// cell) on every single frame of every clip. On-device profiling
+// (Milestone 13, 2026-08-21) found this rebuild-per-frame was the
+// dominant cost in `VoiceCharacterMatcher.match()` at a 40-character
+// enrollment -- ~440ms of a ~510ms match, versus ~24ms for DTW itself.
+final List<List<double>> _dctBasis = [
+  for (var k = 0; k < _coefficientCount; k++)
+    [
+      for (var m = 0; m < _melFilterCount; m++)
+        math.cos(math.pi / _melFilterCount * (m + 0.5) * k),
+    ],
+];
+
+/// DCT-II of [input] (one log-mel-energy value per filter), keeping the
+/// first [_coefficientCount] coefficients -- the standard log-mel-energy
+/// -> cepstral-coefficient step.
+List<double> _dct(List<double> input) => [
+  for (final basisRow in _dctBasis) _dot(input, basisRow),
+];
+
+// The filterbank depends only on [sampleRate], which is always 16000 in
+// this app -- cached so repeated [extractMfcc] calls (once per enrolled
+// character per match, potentially dozens of clips) don't rebuild it
+// from scratch every time.
+final Map<int, List<List<double>>> _filterbankCache = {};
+
+List<List<double>> _melFilterbankFor(int sampleRate) =>
+    _filterbankCache.putIfAbsent(sampleRate, () => _melFilterbank(sampleRate));
 
 /// A bank of [_melFilterCount] overlapping triangular filters spanning
 /// 0Hz to the Nyquist frequency, evenly spaced on the mel scale --

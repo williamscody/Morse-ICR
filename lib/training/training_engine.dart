@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../audio/turn_player.dart';
 import '../debug_log.dart';
+import '../speech/response_listener.dart' show ResponseWindowSnapshot;
 import 'character_selector.dart';
 
 /// Drives the character-generation training loop
@@ -102,18 +103,52 @@ class TrainingEngine {
   /// for a mismatched, stale (already-superseded), repeat, or
   /// deadline-expired response, or one that arrives before the current
   /// turn has actually started playing.
-  void submitResponse(String character) {
+  ///
+  /// [at], when given, is judged instead of live state -- a
+  /// [ResponseWindowSnapshot] captured back when the learner actually
+  /// *started* responding (e.g. speech onset), not whenever recognition
+  /// eventually finished figuring out what they said. On-device data
+  /// (Milestone 13, 2026-08-22) found recognition latency alone was
+  /// pushing the deadline check past close on nearly every response even
+  /// when the learner started answering well within the window --
+  /// judging against the snapshot instead means recognition speed no
+  /// longer eats into a recognitionTime budget it was never actually
+  /// needed for. Also fixes a correctness gap at tight budgets: if
+  /// recognition resolves after the *next* turn has already started,
+  /// the response still attributes to the turn it was actually an
+  /// attempt for ([at]'s own `character`), not whatever's currently
+  /// awaited. Omitted (the default), this falls back to exactly the
+  /// live-state check above -- what a listener with no separate onset
+  /// moment to hook (`SpeechToTextResponseListener`) gets.
+  void submitResponse(String character, {ResponseWindowSnapshot? at}) {
+    final awaitingCharacter = at?.character ?? _awaitingResponseFor;
+    final windowOpen = at?.windowOpen ?? _responseWindowOpen;
+    // windowOpen surfaces the actual "beat the computer" deadline
+    // (morseEnd..answerStart, via [_windowOpenTimer]/[_windowCloseTimer]
+    // below) directly -- awaiting/respondedTo alone don't distinguish a
+    // content mismatch from a same-character response that simply
+    // arrived after the window had already closed, which on-device
+    // debugging (Milestone 13 step 5) needs to tell apart.
     logDebug(
-      'submitResponse($character) awaiting=$_awaitingResponseFor '
-      'respondedTo=$_respondedTo',
+      'submitResponse($character) awaiting=$awaitingCharacter '
+      'respondedTo=$_respondedTo windowOpen=$windowOpen',
     );
-    if (character != _awaitingResponseFor || character == _respondedTo) {
+    if (character != awaitingCharacter || character == _respondedTo) {
       return;
     }
-    if (!_responseWindowOpen) return;
+    if (!windowOpen) return;
     _respondedTo = character;
     onCorrectResponse?.call(character);
   }
+
+  /// Snapshots which character (if any) the response window is
+  /// currently open for, and whether it's open -- see [submitResponse]'s
+  /// `at` parameter. Meant to be called synchronously at the exact
+  /// instant a listener detects the learner starting to respond (not
+  /// after any async work), so the live fields read here are still
+  /// exactly correct for that moment.
+  ResponseWindowSnapshot captureResponseWindow() =>
+      (character: _awaitingResponseFor, windowOpen: _responseWindowOpen);
 
   /// Starts generating and playing characters from [characters] at
   /// [wpm], with [recognitionTime] of silence baked into each one's
@@ -333,11 +368,17 @@ class TrainingEngine {
       // "beat the computer" window precisely without depending on a
       // wall clock that a widget test's virtualized pump() doesn't
       // actually advance.
+      // Milestone 13 step 5 on-device debugging: absolute open/close
+      // timestamps, directly comparable against VoiceResponseListener's
+      // "utterance detected"/"match took" log lines, rather than having
+      // to estimate the window's position from a turn's total duration.
       _windowOpenTimer = Timer(resolvedTiming.morseEnd, () {
         _responseWindowOpen = true;
+        logDebug('windowOpen($character): opened');
       });
       _windowCloseTimer = Timer(resolvedTiming.answerStart, () {
         _responseWindowOpen = false;
+        logDebug('windowOpen($character): closed');
       });
 
       // Pre-fetch the *next* turn now, overlapping its render+

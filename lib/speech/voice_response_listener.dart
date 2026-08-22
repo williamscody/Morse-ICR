@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:record/record.dart';
 
+import '../debug_log.dart';
 import 'enrollment_store.dart';
 import 'file_enrollment_store.dart';
 import 'response_listener.dart';
@@ -16,9 +17,12 @@ import 'voice_character_matcher.dart';
 /// segmented into individual utterances by [UtteranceEndpointer], each
 /// matched against the learner's enrolled recordings.
 ///
-/// Not yet wired in as `TrainingScreen`'s production listener (that's
-/// step 5) -- this class exists to be tried on-device via a temporary
-/// debug trigger first.
+/// `TrainingScreen`'s production listener as of Milestone 13 step 5. Uses
+/// a much shorter [UtteranceEndpointer.hangoverDuration] than
+/// enrollment's own recorder does -- see that field's doc comment for
+/// the on-device history behind this (a fixed-duration onset-triggered
+/// capture was tried in between and reverted: it fit the response
+/// window better but truncated real speech and tanked accuracy).
 class VoiceResponseListener implements ResponseListener {
   VoiceResponseListener({
     VoiceCharacterMatcher? matcher,
@@ -27,21 +31,62 @@ class VoiceResponseListener implements ResponseListener {
   }) : _matcher =
            matcher ??
            VoiceCharacterMatcher(enrollmentStore ?? FileEnrollmentStore()),
-       _endpointer = endpointer ?? UtteranceEndpointer();
+       _endpointer =
+           endpointer ??
+           UtteranceEndpointer(
+             hangoverDuration: const Duration(milliseconds: 80),
+             maxUtteranceDuration: const Duration(milliseconds: 800),
+           ) {
+    _endpointer.onSpeechStarted = _handleSpeechStarted;
+  }
 
   final VoiceCharacterMatcher _matcher;
   final UtteranceEndpointer _endpointer;
   final AudioRecorder _recorder = AudioRecorder();
   StreamSubscription<Uint8List>? _subscription;
-  void Function(String character)? _onRecognized;
+  ResponseCallback? _onRecognized;
+  Set<String>? _activeCharacters;
+  ResponseWindowSnapshot? _pendingWindowSnapshot;
+
+  /// Restricts matching to [characters] -- `TrainingScreen` calls this
+  /// with the active training set right before each session starts
+  /// (morse_icr_spec.md section 27: training a set never asks about
+  /// characters outside it). Not part of [ResponseListener] itself,
+  /// same as other implementation-specific hooks in this codebase
+  /// (e.g. `TrainingScreen._applyAppSettings`'s `is TtsAnswerSpeaker`
+  /// check) -- callers reach this via an `is VoiceResponseListener`
+  /// check rather than it polluting the shared interface every
+  /// implementation would otherwise have to support.
+  void updateActiveCharacters(List<String> characters) {
+    _activeCharacters = characters.toSet();
+  }
+
+  /// Lets `TrainingScreen` wire this listener's speech-onset detection
+  /// to `TrainingEngine.captureResponseWindow`, so [_handleSpeechStarted]
+  /// can snapshot "beat the computer" timing the instant the learner
+  /// starts responding, well before recognition finishes resolving what
+  /// they said (Milestone 13, 2026-08-22 -- see
+  /// `TrainingEngine.submitResponse`'s `at` parameter). Not part of
+  /// [ResponseListener] itself, same precedent as [updateActiveCharacters]:
+  /// only a listener that can detect onset separately from a finished
+  /// result can usefully support this.
+  ResponseWindowSnapshot Function()? captureResponseWindow;
+
+  void _handleSpeechStarted() {
+    _pendingWindowSnapshot = captureResponseWindow?.call();
+  }
 
   @override
-  Future<void> startListening(
-    void Function(String character) onRecognized,
-  ) async {
+  Future<void> startListening(ResponseCallback onRecognized) async {
     _onRecognized = onRecognized;
     if (!await _recorder.hasPermission()) return;
     _endpointer.reset();
+    _pendingWindowSnapshot = null;
+    // Picks up any enrollment changes made since the last session
+    // (Settings' "Personalize Recognition" can happen between sessions
+    // while this listener instance outlives them) rather than matching
+    // against cached, possibly-stale reference features.
+    _matcher.invalidateCache();
     const sampleRate = 16000;
     final stream = await _recorder.startStream(
       const RecordConfig(
@@ -56,6 +101,7 @@ class VoiceResponseListener implements ResponseListener {
   @override
   Future<void> restart() async {
     _endpointer.reset();
+    _pendingWindowSnapshot = null;
   }
 
   @override
@@ -67,18 +113,36 @@ class VoiceResponseListener implements ResponseListener {
   }
 
   void _onChunk(Uint8List chunk) {
-    final utterance = _endpointer.addChunk(chunk, _chunkDuration(chunk));
-    if (utterance != null) unawaited(_matchAndReport(utterance));
+    final utterance = _endpointer.addChunk(chunk, pcm16ChunkDuration(chunk));
+    if (utterance != null) {
+      // Captured (and cleared) here, before the async match below, so a
+      // second utterance's onset can't overwrite it mid-match -- safe
+      // since [UtteranceEndpointer] only ever has one utterance in
+      // flight at a time, so onset-then-completion is always sequential
+      // per utterance.
+      final snapshot = _pendingWindowSnapshot;
+      _pendingWindowSnapshot = null;
+      // Diagnostic-only (Milestone 13 step 5 on-device trial):
+      // [_matchAndReport] runs unawaited/unserialized, so overlapping
+      // matches could in principle back up behind each other -- these
+      // timestamps are here to confirm or rule that out from real
+      // on-device timing before changing anything.
+      logDebug('voice: utterance detected (${utterance.length} bytes)');
+      unawaited(_matchAndReport(utterance, snapshot));
+    }
   }
 
-  Future<void> _matchAndReport(Uint8List utterance) async {
-    final character = await _matcher.match(utterance);
-    if (character != null) _onRecognized?.call(character);
-  }
-
-  // PCM16 mono at 16kHz: 2 bytes per sample, 16000 samples per second.
-  Duration _chunkDuration(Uint8List chunk) {
-    final sampleCount = chunk.length ~/ 2;
-    return Duration(microseconds: sampleCount * 1000000 ~/ 16000);
+  Future<void> _matchAndReport(
+    Uint8List utterance,
+    ResponseWindowSnapshot? snapshot,
+  ) async {
+    final startedAt = DateTime.now();
+    final character = await _matcher.match(
+      utterance,
+      candidates: _activeCharacters,
+    );
+    final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
+    logDebug('voice: match took ${elapsedMs}ms -> ${character ?? "no match"}');
+    if (character != null) _onRecognized?.call(character, at: snapshot);
   }
 }

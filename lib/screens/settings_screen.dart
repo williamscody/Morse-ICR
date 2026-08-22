@@ -22,6 +22,7 @@ class SettingsScreen extends StatefulWidget {
     required this.voiceVolumePercent,
     required this.onVoiceChanged,
     required this.onRecognitionChanged,
+    required this.onOpenVoiceSetup,
     required this.onSpeakPeriodAsDotChanged,
     required this.onSpeakSlashAsStrokeChanged,
     required this.onMorsePitchChanged,
@@ -39,6 +40,7 @@ class SettingsScreen extends StatefulWidget {
   final int voiceVolumePercent;
   final ValueChanged<bool> onVoiceChanged;
   final ValueChanged<bool> onRecognitionChanged;
+  final VoidCallback onOpenVoiceSetup;
   final ValueChanged<bool> onSpeakPeriodAsDotChanged;
   final ValueChanged<bool> onSpeakSlashAsStrokeChanged;
   final ValueChanged<int> onMorsePitchChanged;
@@ -121,6 +123,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         },
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Opens voice enrollment (morse_icr_spec.md section
+                  // 38): recognition is matched against the learner's
+                  // own enrolled recordings, so this is where they're
+                  // made/redone. Placed directly under the Speech
+                  // Recognition toggle it configures, per Bill's
+                  // decision -- not a generic settings item.
+                  OutlinedButton(
+                    onPressed: widget.onOpenVoiceSetup,
+                    child: const Text('Personalize Recognition'),
                   ),
                   const SizedBox(height: 24),
                   Text(

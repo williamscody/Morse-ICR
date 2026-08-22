@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/screens/enrollment_screen.dart';
+import 'package:morse_icr/speech/character_recorder.dart';
 import 'package:morse_icr/speech/enrollment_store.dart';
 
 class _FakeEnrollmentStore implements EnrollmentStore {
@@ -119,4 +120,30 @@ void main() {
     expect(calls, 1);
     expect(store.recordings['K'], Uint8List.fromList([1]));
   });
+
+  testWidgets(
+    'shows a message and leaves the character unenrolled when no speech '
+    'is detected',
+    (tester) async {
+      final store = _FakeEnrollmentStore();
+      Future<Uint8List> silentRecordClip() async => throw NoSpeechDetected();
+
+      await tester.pumpWidget(
+        wrap(EnrollmentScreen(store: store, recordClip: silentRecordClip)),
+      );
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilterChip, 'K'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(store.recordings.containsKey('K'), isFalse);
+      expect(
+        find.text(
+          "Didn't catch that -- speak right after tapping, then try again.",
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 }

@@ -433,6 +433,80 @@ void main() {
       },
     );
 
+    test('submitResponse credits a response using an `at` snapshot showing '
+        'the window was open, even after the live window has since closed '
+        '-- recognition latency should not be able to eat into the '
+        "deadline for a response that started on time", () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final correct = <String>[];
+      engine.onCorrectResponse = correct.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 20),
+      );
+      // Past E's own deadline -- live windowOpen is false by now (see
+      // the "does not fire...deadline has passed" test above for the
+      // no-`at` version of this same timing, which is rejected).
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      engine.submitResponse('E', at: (character: 'E', windowOpen: true));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await engine.stop();
+
+      expect(correct, ['E']);
+    });
+
+    test('submitResponse rejects a response whose `at` snapshot shows the '
+        'window was already closed, even if called while the live window '
+        'happens to be open', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final correct = <String>[];
+      engine.onCorrectResponse = correct.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 200),
+      );
+      // Within E's window (mirrors the plain "fires onCorrectResponse"
+      // test's own 15ms delay) -- live windowOpen is true here.
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      engine.submitResponse('E', at: (character: 'E', windowOpen: false));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await engine.stop();
+
+      expect(correct, isEmpty);
+    });
+
+    test("submitResponse attributes a response to the `at` snapshot's "
+        'character, not whatever the engine is currently awaiting', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final correct = <String>[];
+      engine.onCorrectResponse = correct.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 200),
+      );
+      // The engine is awaiting 'E' throughout (only one character in
+      // the set), but the snapshot claims this response started for
+      // 'Q' with its own window open -- it should be credited to 'Q',
+      // not rejected for not matching the live awaiting character, so
+      // a response that started before a fast turn transition still
+      // gets attributed correctly once recognition resolves it later.
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      engine.submitResponse('Q', at: (character: 'Q', windowOpen: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await engine.stop();
+
+      expect(correct, ['Q']);
+    });
+
     test(
       'submitResponse when no recognition deadline is running is a no-op',
       () {

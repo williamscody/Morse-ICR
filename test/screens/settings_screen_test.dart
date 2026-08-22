@@ -16,6 +16,7 @@ void main() {
     int voiceVolumePercent = 100,
     ValueChanged<bool>? onVoiceChanged,
     ValueChanged<bool>? onRecognitionChanged,
+    VoidCallback? onOpenVoiceSetup,
     ValueChanged<bool>? onSpeakPeriodAsDotChanged,
     ValueChanged<bool>? onSpeakSlashAsStrokeChanged,
     ValueChanged<int>? onMorsePitchChanged,
@@ -32,6 +33,7 @@ void main() {
     voiceVolumePercent: voiceVolumePercent,
     onVoiceChanged: onVoiceChanged ?? (_) {},
     onRecognitionChanged: onRecognitionChanged ?? (_) {},
+    onOpenVoiceSetup: onOpenVoiceSetup ?? () {},
     onSpeakPeriodAsDotChanged: onSpeakPeriodAsDotChanged ?? (_) {},
     onSpeakSlashAsStrokeChanged: onSpeakSlashAsStrokeChanged ?? (_) {},
     onMorsePitchChanged: onMorsePitchChanged ?? (_) {},
@@ -105,12 +107,24 @@ void main() {
     },
   );
 
+  testWidgets('tapping "Personalize Recognition" invokes onOpenVoiceSetup', (
+    tester,
+  ) async {
+    var tapped = false;
+    await tester.pumpWidget(
+      wrap(buildScreen(onOpenVoiceSetup: () => tapped = true)),
+    );
+
+    await tester.tap(find.text('Personalize Recognition'));
+    await tester.pump();
+
+    expect(tapped, isTrue);
+  });
+
   testWidgets('renders the Period/Dot and Slash/Stroke choices at the given '
       'initial values', (tester) async {
     await tester.pumpWidget(
-      wrap(
-        buildScreen(speakPeriodAsDot: true, speakSlashAsStroke: false),
-      ),
+      wrap(buildScreen(speakPeriodAsDot: true, speakSlashAsStroke: false)),
     );
 
     final periodDot = tester.widget<SegmentedButton<bool>>(
@@ -200,10 +214,7 @@ void main() {
     final changes = <int>[];
     await tester.pumpWidget(
       wrap(
-        buildScreen(
-          morseVolumePercent: 60,
-          onMorseVolumeChanged: changes.add,
-        ),
+        buildScreen(morseVolumePercent: 60, onMorseVolumeChanged: changes.add),
       ),
     );
 
@@ -221,7 +232,9 @@ void main() {
     final changes = <int>[];
     // Starts below 100%/max -- the + button is disabled at max.
     await tester.pumpWidget(
-      wrap(buildScreen(voiceVolumePercent: 90, onVoiceVolumeChanged: changes.add)),
+      wrap(
+        buildScreen(voiceVolumePercent: 90, onVoiceVolumeChanged: changes.add),
+      ),
     );
 
     final addButton = find.byIcon(Icons.add_circle_outline).at(2);

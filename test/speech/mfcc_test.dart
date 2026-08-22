@@ -5,7 +5,8 @@ import 'test_audio.dart';
 
 void main() {
   group('extractMfcc', () {
-    test('produces one 13-coefficient vector per 25ms/10ms-hop frame', () {
+    test('produces one 26-value vector (13 static + 13 delta) per '
+        '25ms/10ms-hop frame', () {
       const sampleRate = 16000;
       const durationSeconds = 0.5;
       final clip = sineWavePcm16(
@@ -22,7 +23,7 @@ void main() {
       final expectedFrameCount = 1 + (sampleCount - frameLength) ~/ hopLength;
       expect(features.length, expectedFrameCount);
       for (final frame in features) {
-        expect(frame.length, 13);
+        expect(frame.length, 26);
       }
     });
 

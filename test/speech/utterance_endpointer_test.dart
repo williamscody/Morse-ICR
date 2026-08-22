@@ -100,5 +100,33 @@ void main() {
       expect(utterance, isNotNull);
       expect(utterance!.length, 4 * _chunk(0).length);
     });
+
+    test('onSpeechStarted fires exactly once, at the first speech chunk '
+        'of an utterance', () {
+      var calls = 0;
+      endpointer.onSpeechStarted = () => calls++;
+
+      endpointer.addChunk(_chunk(0), _chunkDuration);
+      expect(calls, 0, reason: 'silence should never trigger it');
+      endpointer.addChunk(_chunk(5000), _chunkDuration);
+      expect(calls, 1, reason: 'the first speech chunk starts the utterance');
+      endpointer.addChunk(_chunk(5000), _chunkDuration);
+      expect(calls, 1, reason: 'later chunks of the same utterance should not');
+    });
+
+    test('onSpeechStarted fires again for the next utterance once the '
+        'previous one ends', () {
+      var calls = 0;
+      endpointer.onSpeechStarted = () => calls++;
+
+      endpointer.addChunk(_chunk(5000), _chunkDuration);
+      endpointer.addChunk(_chunk(0), _chunkDuration);
+      endpointer.addChunk(_chunk(0), _chunkDuration);
+      endpointer.addChunk(_chunk(0), _chunkDuration);
+      expect(calls, 1);
+
+      endpointer.addChunk(_chunk(5000), _chunkDuration);
+      expect(calls, 2);
+    });
   });
 }

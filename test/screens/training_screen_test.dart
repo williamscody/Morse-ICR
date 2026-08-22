@@ -69,20 +69,19 @@ class _FakeSpeaker extends AnswerSpeaker {
 }
 
 /// A no-op listener so Start/Stop tests never touch the real
-/// [SpeechToTextResponseListener] platform plugin, which -- like
-/// [_FakeTurnPlayer]'s real counterpart -- has no channel mock registered
-/// under `flutter test` and hangs indefinitely if invoked. Also records
-/// the callback so tests can simulate a recognized response.
+/// `VoiceResponseListener` (or `SpeechToTextResponseListener`) platform
+/// plugins, which -- like [_FakeTurnPlayer]'s real counterpart -- have no
+/// channel mock registered under `flutter test` and hang indefinitely if
+/// invoked. Also records the callback so tests can simulate a recognized
+/// response.
 class _FakeResponseListener implements ResponseListener {
   final List<String> startListeningCalls = [];
   final List<String> restartCalls = [];
   final List<String> stopListeningCalls = [];
-  void Function(String character)? onRecognized;
+  ResponseCallback? onRecognized;
 
   @override
-  Future<void> startListening(
-    void Function(String character) onRecognized,
-  ) async {
+  Future<void> startListening(ResponseCallback onRecognized) async {
     this.onRecognized = onRecognized;
     startListeningCalls.add('start');
   }

@@ -1,3 +1,25 @@
+/// A snapshot of which character (if any) a response window was open
+/// for, and whether it was open, captured at a specific moment --
+/// carried alongside a matched character into [ResponseCallback] so the
+/// receiver can judge "on time" against that earlier moment (e.g. speech
+/// onset) rather than against whenever recognition eventually finishes
+/// resolving what was said. See `TrainingEngine.captureResponseWindow`
+/// and `TrainingEngine.submitResponse`'s `at` parameter (Milestone 13,
+/// 2026-08-22): recognition latency shouldn't be able to eat into a
+/// recognitionTime budget it never actually needed for the timing
+/// decision itself.
+typedef ResponseWindowSnapshot = ({String? character, bool windowOpen});
+
+/// Reports a matched character, optionally alongside the
+/// [ResponseWindowSnapshot] captured when the response actually started
+/// (not necessarily when recognition of it finished). `at` is omitted by
+/// a listener with no separate onset moment to hook (e.g.
+/// `SpeechToTextResponseListener`, which only ever gets a finished
+/// result), in which case the receiver falls back to judging against
+/// live state at call time.
+typedef ResponseCallback =
+    void Function(String character, {ResponseWindowSnapshot? at});
+
 /// Anything that can listen for the learner saying a character aloud
 /// and report recognized characters back (morse_icr_spec.md section 27:
 /// "the architecture should allow the speech-recognition implementation
@@ -14,7 +36,7 @@ abstract class ResponseListener {
   /// listening session, e.g. once per speech-recognition partial/final
   /// result -- callers decide what to do with an unmatched or repeated
   /// recognition.
-  Future<void> startListening(void Function(String character) onRecognized);
+  Future<void> startListening(ResponseCallback onRecognized);
 
   /// Marks a new character's start, so only speech heard from this
   /// point on is matched against it. Speech-recognition engines report

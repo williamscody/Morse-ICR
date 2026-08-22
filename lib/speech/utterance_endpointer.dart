@@ -1,5 +1,14 @@
 import 'dart:typed_data';
 
+/// The duration [chunk] represents, assuming raw PCM16 mono audio at
+/// [sampleRate] -- shared by every caller streaming real-time PCM16
+/// chunks into an [UtteranceEndpointer] (`VoiceResponseListener`'s live
+/// recognition and `character_recorder.dart`'s enrollment capture).
+Duration pcm16ChunkDuration(Uint8List chunk, {int sampleRate = 16000}) {
+  final sampleCount = chunk.length ~/ 2;
+  return Duration(microseconds: sampleCount * 1000000 ~/ sampleRate);
+}
+
 /// Segments a continuous stream of raw PCM16 audio chunks into
 /// individual spoken-character utterances (morse_icr_spec.md section
 /// 38), via a simple peak-amplitude voice-activity detector -- the same
@@ -17,7 +26,7 @@ import 'dart:typed_data';
 class UtteranceEndpointer {
   UtteranceEndpointer({
     this.speechThreshold = 1000,
-    this.hangoverDuration = const Duration(milliseconds: 400),
+    this.hangoverDuration = const Duration(milliseconds: 150),
     this.minUtteranceDuration = const Duration(milliseconds: 150),
     this.maxUtteranceDuration = const Duration(milliseconds: 2000),
   });
@@ -26,7 +35,28 @@ class UtteranceEndpointer {
   /// speech rather than silence/background noise.
   final int speechThreshold;
 
-  /// How much accumulated silence after speech ends the utterance.
+  /// How much accumulated silence after speech ends the utterance --
+  /// pure latency tax on top of the ~100ms match itself, since nothing
+  /// is reported until this elapses.
+  ///
+  /// Lowered from an initial 400ms placeholder to 150ms, then to 80ms,
+  /// after on-device data (Milestone 13 step 5, 2026-08-21/22). 150ms
+  /// still structurally missed a 1000ms recognitionTime window on every
+  /// single response. A fixed-duration onset-triggered capture was tried
+  /// next (`FixedWindowCapture`, since removed): it landed inside the
+  /// window far more often, but a duration short enough to fit
+  /// (400ms) truncated real speech and collapsed match accuracy (4/7
+  /// correct at 600ms down to 1/8 at 400ms, with wrong answers
+  /// clustering on a couple of generic short-clip "attractors" --
+  /// the same failure mode enrollment trimming fixed once already, this
+  /// time on the query side), while a duration long enough to preserve
+  /// accuracy (600ms) missed the window every time. A short hangover
+  /// keeps [UtteranceEndpointer]'s natural per-word sizing (no
+  /// truncation risk for a longer spoken form, no wasted tail on a
+  /// short one) while cutting the pure "wait to confirm silence" tax
+  /// most of the way down -- this is still an on-device guess like every
+  /// other threshold here, not confirmed to actually beat the fixed-
+  /// window approach's timing/accuracy tradeoff yet.
   final Duration hangoverDuration;
 
   /// Utterances shorter than this are discarded as noise blips rather
@@ -36,6 +66,19 @@ class UtteranceEndpointer {
   /// Safety cap forcing an utterance to end even if speech never
   /// pauses, so a stuck/loud input can't buffer forever.
   final Duration maxUtteranceDuration;
+
+  /// Called the instant a chunk first crosses [speechThreshold] -- i.e.
+  /// speech onset -- well before [addChunk] eventually returns the
+  /// complete utterance once silence (or [maxUtteranceDuration]) ends
+  /// it. Not every caller needs this (`character_recorder.dart`'s
+  /// enrollment capture leaves it unset); `VoiceResponseListener` uses
+  /// it to snapshot "beat the computer" timing at the earliest possible
+  /// moment, since recognition itself can take far longer to finish
+  /// than onset detection does (Milestone 13, 2026-08-22 on-device
+  /// data: match latency alone was pushing the deadline check past
+  /// close on nearly every response, even when the learner started
+  /// answering well within the window).
+  void Function()? onSpeechStarted;
 
   bool _speaking = false;
   final BytesBuilder _buffer = BytesBuilder();
@@ -55,6 +98,7 @@ class UtteranceEndpointer {
       _buffer.clear();
       _bufferedDuration = Duration.zero;
       _silenceDuration = Duration.zero;
+      onSpeechStarted?.call();
     }
 
     _buffer.add(pcm16Chunk);

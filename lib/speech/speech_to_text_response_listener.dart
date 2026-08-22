@@ -21,7 +21,7 @@ class SpeechToTextResponseListener implements ResponseListener {
     : _speechToText = speechToText ?? SpeechToText();
 
   final SpeechToText _speechToText;
-  void Function(String character)? _onRecognized;
+  ResponseCallback? _onRecognized;
   bool _shouldBeListening = false;
 
   // The OS reports one growing transcript for an entire listen session
@@ -41,9 +41,7 @@ class SpeechToTextResponseListener implements ResponseListener {
   String _lastFullText = '';
 
   @override
-  Future<void> startListening(
-    void Function(String character) onRecognized,
-  ) async {
+  Future<void> startListening(ResponseCallback onRecognized) async {
     _onRecognized = onRecognized;
     _shouldBeListening = true;
     final available = await _speechToText.initialize(onStatus: _onStatus);

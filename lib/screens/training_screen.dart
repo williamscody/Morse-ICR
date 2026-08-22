@@ -13,7 +13,6 @@ import '../speech/answer_speaker.dart';
 import '../speech/enrollment_store.dart';
 import '../speech/file_enrollment_store.dart';
 import '../speech/response_listener.dart';
-import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
 import '../speech/voice_response_listener.dart';
 import '../training/app_settings.dart';
@@ -191,11 +190,29 @@ class _TrainingScreenState extends State<TrainingScreen>
       _trainingEngine = TrainingEngine(turnPlayer: turnEngine);
       _keepAliveLoop = KeepAliveAudioLoop();
     }
-    _responseListener =
-        widget._injectedResponseListener ?? SpeechToTextResponseListener();
     _problemCharacterStore =
         widget._injectedProblemCharacterStore ?? FileProblemCharacterStore();
     _enrollmentStore = widget._injectedEnrollmentStore ?? FileEnrollmentStore();
+    // Milestone 13 step 5 (morse_icr_spec.md section 38): the
+    // enrollment-trained recognizer is the only production
+    // ResponseListener -- no engine-selection toggle, per Bill's
+    // standing decision (SpeechToTextResponseListener stays in the
+    // codebase for comparison/testing, but is no longer wired in here).
+    _responseListener =
+        widget._injectedResponseListener ??
+        VoiceResponseListener(enrollmentStore: _enrollmentStore);
+    // Lets VoiceResponseListener snapshot "beat the computer" timing the
+    // instant it detects the learner starting to respond, rather than
+    // only being able to judge timing once recognition fully resolves
+    // what they said (Milestone 13, 2026-08-22 -- see
+    // TrainingEngine.submitResponse's `at` parameter). A one-time wire-up
+    // since both objects live for the whole widget lifetime, unlike
+    // updateActiveCharacters below which changes per session.
+    final responseListener = _responseListener;
+    if (responseListener is VoiceResponseListener) {
+      responseListener.captureResponseWindow =
+          _trainingEngine.captureResponseWindow;
+    }
     // Reflects a previously-saved problem-character set as the active
     // training set right from cold launch, not just for the rest of the
     // session it was entered in -- on-device testing showed a set that
@@ -522,6 +539,10 @@ class _TrainingScreenState extends State<TrainingScreen>
       );
     }
     if (_recognitionEnabled) {
+      final responseListener = _responseListener;
+      if (responseListener is VoiceResponseListener) {
+        responseListener.updateActiveCharacters(characters);
+      }
       try {
         await _responseListener
             .startListening(_trainingEngine.submitResponse)
@@ -677,29 +698,10 @@ class _TrainingScreenState extends State<TrainingScreen>
     setState(() => _problemCharacters = characters.isEmpty ? null : characters);
   }
 
-  // Milestone 13 step 4 (morse_icr_spec.md section 38): temporary
-  // on-device trial for VoiceResponseListener + UtteranceEndpointer --
-  // runs real-time recognition against the learner's enrolled voice for
-  // 10s, logging every match via [logDebug] so Bill can judge VAD/
-  // matching quality (and tune their placeholder thresholds) before
-  // step 5 makes this TrainingScreen's production listener. Delete
-  // alongside its button once step 5 lands.
-  Future<void> _runVoiceTest() async {
-    final listener = VoiceResponseListener();
-    logDebug('voice test: starting (10s)');
-    await listener.startListening(
-      (character) => logDebug('voice test: heard "$character"'),
-    );
-    await Future<void>.delayed(const Duration(seconds: 10));
-    await listener.stopListening();
-    logDebug('voice test: done');
-  }
-
-  // Milestone 13 step 2 (morse_icr_spec.md section 38): temporary debug
-  // entry point for voice enrollment, replacing step 1's "Mic Spike"
-  // trigger now that this is the real capture code it was validating.
-  // Not yet a real product entry point -- final placement is a product
-  // decision for step 4/5, once recognition is actually wired in.
+  // Milestone 13 step 5 (morse_icr_spec.md section 38): opens voice
+  // enrollment, reached via Settings' "Personalize Recognition" button
+  // (Bill's placement decision -- it configures Speech Recognition, so
+  // it lives with that toggle rather than as a standalone entry point).
   Future<void> _openEnrollmentScreen() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -791,6 +793,7 @@ class _TrainingScreenState extends State<TrainingScreen>
           voiceVolumePercent: _appSettings.voiceVolumePercent,
           onVoiceChanged: (value) => setState(() => _voiceEnabled = value),
           onRecognitionChanged: _onRecognitionChanged,
+          onOpenVoiceSetup: _openEnrollmentScreen,
           onSpeakPeriodAsDotChanged: (value) => _updateAppSettings(
             _appSettings.copyWith(speakPeriodAsDot: value),
           ),
@@ -1073,22 +1076,6 @@ class _TrainingScreenState extends State<TrainingScreen>
                         ? _toggleTraining
                         : null,
                     child: Text(_isTraining ? 'Stop' : 'Start'),
-                  ),
-                  const SizedBox(height: 16),
-                  // Milestone 13 step 2 (morse_icr_spec.md section 38):
-                  // temporary trigger for [_openEnrollmentScreen] -- see
-                  // that method's doc comment.
-                  OutlinedButton(
-                    onPressed: () => unawaited(_openEnrollmentScreen()),
-                    child: const Text('Enroll'),
-                  ),
-                  const SizedBox(height: 16),
-                  // Milestone 13 step 4 (morse_icr_spec.md section 38):
-                  // temporary trigger for [_runVoiceTest] -- see that
-                  // method's doc comment.
-                  OutlinedButton(
-                    onPressed: () => unawaited(_runVoiceTest()),
-                    child: const Text('Voice Test (10s)'),
                   ),
                   const SizedBox(height: 16),
                   _DebugLogPanel(),

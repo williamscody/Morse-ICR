@@ -11,6 +11,7 @@ class _FakeEnrollmentStore implements EnrollmentStore {
     : recordings = recordings ?? {};
 
   final Map<String, Uint8List> recordings;
+  int loadRecordingCalls = 0;
 
   @override
   Future<Set<String>> enrolledCharacters() async => recordings.keys.toSet();
@@ -21,8 +22,10 @@ class _FakeEnrollmentStore implements EnrollmentStore {
   }
 
   @override
-  Future<Uint8List?> loadRecording(String character) async =>
-      recordings[character];
+  Future<Uint8List?> loadRecording(String character) async {
+    loadRecordingCalls++;
+    return recordings[character];
+  }
 }
 
 void main() {
@@ -61,5 +64,50 @@ void main() {
 
       expect(result, isNull);
     });
+
+    test(
+      'candidates restricts matching to a subset of enrolled characters',
+      () async {
+        final store = _FakeEnrollmentStore({
+          'A': sineWavePcm16(300),
+          'B': sineWavePcm16(900),
+        });
+        final matcher = VoiceCharacterMatcher(store);
+        // Closest to 'A', but 'A' isn't a candidate -- the active
+        // training set doesn't include it (e.g. training digits, not
+        // letters), so it should never be returned even though it's
+        // the overall closest match.
+        final query = sineWavePcm16(300, durationSeconds: 0.55);
+
+        final restricted = await matcher.match(
+          query,
+          maxDistance: 1000,
+          candidates: {'B'},
+        );
+        final unrestricted = await matcher.match(query, maxDistance: 1000);
+
+        expect(restricted, 'B');
+        expect(unrestricted, 'A');
+      },
+    );
+
+    test(
+      'caches reference recordings across matches, until invalidated',
+      () async {
+        final store = _FakeEnrollmentStore({'A': sineWavePcm16(300)});
+        final matcher = VoiceCharacterMatcher(store);
+        final query = sineWavePcm16(300, durationSeconds: 0.55);
+
+        await matcher.match(query, maxDistance: 1000);
+        await matcher.match(query, maxDistance: 1000);
+
+        expect(store.loadRecordingCalls, 1);
+
+        matcher.invalidateCache();
+        await matcher.match(query, maxDistance: 1000);
+
+        expect(store.loadRecordingCalls, 2);
+      },
+    );
   });
 }
