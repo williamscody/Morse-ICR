@@ -49,37 +49,29 @@ void main() {
     await tester.pump();
 
     expect(find.text('No training sessions recorded yet.'), findsOneWidget);
-    expect(find.text('Total Time: 00:00'), findsOneWidget);
+    expect(find.text('Total Time: 00:00:00'), findsOneWidget);
   });
 
   testWidgets('shows the sum of every recorded session\'s duration as the '
       'total, not a separately-tracked counter', (tester) async {
     await tester.pumpWidget(
-      wrap(
-        TrainingLogScreen(
-          store: _FakeTrainingLogStore([earlier, later]),
-        ),
-      ),
+      wrap(TrainingLogScreen(store: _FakeTrainingLogStore([earlier, later]))),
     );
     await tester.pump();
 
-    expect(find.text('Total Time: 00:08'), findsOneWidget);
+    expect(find.text('Total Time: 00:08:00'), findsOneWidget);
   });
 
   testWidgets('shows each session\'s date, time, duration, and focus in one '
       'row, newest first', (tester) async {
     await tester.pumpWidget(
-      wrap(
-        TrainingLogScreen(
-          store: _FakeTrainingLogStore([earlier, later]),
-        ),
-      ),
+      wrap(TrainingLogScreen(store: _FakeTrainingLogStore([earlier, later]))),
     );
     await tester.pump();
 
     expect(find.text('08/21/26'), findsOneWidget);
     expect(find.text('10:30 AM'), findsOneWidget);
-    expect(find.text('00:03'), findsOneWidget);
+    expect(find.text('00:03:00'), findsOneWidget);
     expect(find.text('K R F'), findsOneWidget);
     expect(find.text('100'), findsOneWidget);
     expect(find.text('250 ms'), findsOneWidget);
@@ -175,7 +167,9 @@ void main() {
     await tester.pump();
 
     expect(
-      tester.widget<TextButton>(find.widgetWithText(TextButton, 'Clear')).onPressed,
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Clear'))
+          .onPressed,
       isNull,
     );
     expect(
@@ -216,7 +210,7 @@ void main() {
     );
     expect(
       exportedCsv,
-      contains('08/20/26,09:00 AM,00:05,A-Z,90,500,0,first session'),
+      contains('08/20/26,09:00 AM,00:05:00,A-Z,90,500,0,first session'),
     );
   });
 }

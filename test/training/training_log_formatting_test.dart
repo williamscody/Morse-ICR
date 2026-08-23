@@ -29,13 +29,20 @@ void main() {
 
   group('formatSessionDuration', () {
     test('formats sub-hour durations', () {
-      expect(formatSessionDuration(const Duration(minutes: 5)), '00:05');
+      expect(formatSessionDuration(const Duration(minutes: 5)), '00:05:00');
     });
 
     test('formats durations past an hour', () {
       expect(
         formatSessionDuration(const Duration(hours: 1, minutes: 23)),
-        '01:23',
+        '01:23:00',
+      );
+    });
+
+    test('includes seconds precision', () {
+      expect(
+        formatSessionDuration(const Duration(minutes: 5, seconds: 30)),
+        '00:05:30',
       );
     });
   });
@@ -65,7 +72,7 @@ void main() {
       expect(
         csv,
         'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes\n'
-        '03/05/26,09:00 AM,00:05,A-Z,90,500,100,went well\n',
+        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,went well\n',
       );
     });
 
@@ -86,7 +93,7 @@ void main() {
       expect(
         csv,
         'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes\n'
-        '03/05/26,09:00 AM,00:05,A-Z,90,500,100,'
+        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,'
         '"K, R ""hard"" today\nretry tomorrow"\n',
       );
     });

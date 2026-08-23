@@ -16,15 +16,22 @@ String formatSessionTime(DateTime dateTime) {
       '${dateTime.minute.toString().padLeft(2, '0')} $period';
 }
 
-/// "HH:MM" -- hours and minutes, not [formatCountdown]'s minutes/seconds:
-/// a training session is measured in minutes at the shortest, and can run
-/// well past an hour, matching [TrainingLogScreen]'s sketch.
+/// "HH:MM:SS" -- hours, minutes, and seconds; a training session can run
+/// well past an hour, matching [TrainingLogScreen]'s sketch. Used for
+/// both a single session's own duration and the log's cumulative total.
+///
+/// Dropped seconds entirely until Milestone 13 (2026-08-22) -- Bill
+/// asked for second-level precision on both, since a handful of minutes
+/// rounded to the nearest whole minute was too coarse to be useful for
+/// a training log meant to track real practice time.
 String formatSessionDuration(Duration duration) {
-  final totalMinutes = duration.inMinutes;
-  final hours = totalMinutes ~/ 60;
-  final minutes = totalMinutes % 60;
+  final totalSeconds = duration.inSeconds;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
   return '${hours.toString().padLeft(2, '0')}:'
-      '${minutes.toString().padLeft(2, '0')}';
+      '${minutes.toString().padLeft(2, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}';
 }
 
 /// Builds the training log's CSV export (morse_icr_spec.md section 21),
@@ -42,9 +49,8 @@ String buildTrainingLogCsv(List<TrainingSessionRecord> records) {
     return '"${field.replaceAll('"', '""')}"';
   }
 
-  final buffer = StringBuffer()..writeln(
-    'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes',
-  );
+  final buffer = StringBuffer()
+    ..writeln('Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes');
   for (final record in records) {
     buffer.writeln(
       [

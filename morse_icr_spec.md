@@ -407,9 +407,7 @@ The architecture should make character sets data-driven so additional characters
 
 # 15. Randomization
 
-Characters should be randomly selected from the active character set.
-
-Avoid immediately repeating the same character unless intentionally testing it.
+Characters should be randomly selected from the active character set, uniformly and independently on each draw -- including immediate repeats. (Revised 2026-08-22: an earlier version of this section said to avoid immediately repeating the same character. On-device use showed that rule distorting output at small active-set sizes -- a 2-character focus set was forced into perfect strict alternation every time, which reads as far less random than genuine uniform selection, not more.)
 
 The randomization architecture should eventually support:
 
