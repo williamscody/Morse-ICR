@@ -768,6 +768,7 @@ class _TrainingScreenState extends State<TrainingScreen>
       );
       answerSpeaker.setVoiceVolume(settings.voiceVolumePercent / 100);
     }
+    _trainingEngine.randomCharacterOrder = settings.randomCharacterOrder;
   }
 
   // Persists, applies, and reflects in this screen's own state one
@@ -791,6 +792,7 @@ class _TrainingScreenState extends State<TrainingScreen>
           morsePitchHz: _appSettings.morsePitchHz,
           morseVolumePercent: _appSettings.morseVolumePercent,
           voiceVolumePercent: _appSettings.voiceVolumePercent,
+          randomCharacterOrder: _appSettings.randomCharacterOrder,
           onVoiceChanged: (value) => setState(() => _voiceEnabled = value),
           onRecognitionChanged: _onRecognitionChanged,
           onOpenVoiceSetup: _openEnrollmentScreen,
@@ -807,6 +809,9 @@ class _TrainingScreenState extends State<TrainingScreen>
           ),
           onVoiceVolumeChanged: (value) => _updateAppSettings(
             _appSettings.copyWith(voiceVolumePercent: value),
+          ),
+          onRandomCharacterOrderChanged: (value) => _updateAppSettings(
+            _appSettings.copyWith(randomCharacterOrder: value),
           ),
         ),
       ),

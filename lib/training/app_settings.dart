@@ -14,6 +14,7 @@ class AppSettings {
     this.morsePitchHz = 600,
     this.morseVolumePercent = 60,
     this.voiceVolumePercent = 100,
+    this.randomCharacterOrder = true,
   });
 
   final bool speakPeriodAsDot;
@@ -22,18 +23,26 @@ class AppSettings {
   final int morseVolumePercent;
   final int voiceVolumePercent;
 
+  /// When false, characters play in the active set's own order instead
+  /// of a random draw -- a diagnostic toggle (2026-08-23) for getting a
+  /// repeatable, predictable sequence when isolating a recognition
+  /// accuracy issue. See [CharacterSelector.randomOrder].
+  final bool randomCharacterOrder;
+
   AppSettings copyWith({
     bool? speakPeriodAsDot,
     bool? speakSlashAsStroke,
     int? morsePitchHz,
     int? morseVolumePercent,
     int? voiceVolumePercent,
+    bool? randomCharacterOrder,
   }) => AppSettings(
     speakPeriodAsDot: speakPeriodAsDot ?? this.speakPeriodAsDot,
     speakSlashAsStroke: speakSlashAsStroke ?? this.speakSlashAsStroke,
     morsePitchHz: morsePitchHz ?? this.morsePitchHz,
     morseVolumePercent: morseVolumePercent ?? this.morseVolumePercent,
     voiceVolumePercent: voiceVolumePercent ?? this.voiceVolumePercent,
+    randomCharacterOrder: randomCharacterOrder ?? this.randomCharacterOrder,
   );
 
   Map<String, Object?> toJson() => {
@@ -42,6 +51,7 @@ class AppSettings {
     'morsePitchHz': morsePitchHz,
     'morseVolumePercent': morseVolumePercent,
     'voiceVolumePercent': voiceVolumePercent,
+    'randomCharacterOrder': randomCharacterOrder,
   };
 
   factory AppSettings.fromJson(Map<String, Object?> json) {
@@ -56,6 +66,9 @@ class AppSettings {
           json['morseVolumePercent'] as int? ?? defaults.morseVolumePercent,
       voiceVolumePercent:
           json['voiceVolumePercent'] as int? ?? defaults.voiceVolumePercent,
+      randomCharacterOrder:
+          json['randomCharacterOrder'] as bool? ??
+          defaults.randomCharacterOrder,
     );
   }
 }

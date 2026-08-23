@@ -47,6 +47,11 @@ class TrainingEngine {
 
   bool get isRunning => _running;
 
+  /// Forwards to [CharacterSelector.randomOrder] -- see its doc comment.
+  /// Takes effect on the very next character generated, same as
+  /// [updateSettings]'s other live-adjustable fields.
+  set randomCharacterOrder(bool value) => _selector.randomOrder = value;
+
   /// Called with each character just before its turn starts playing.
   ///
   /// Never surfaced in the UI (morse_icr_spec.md section 24 forbids

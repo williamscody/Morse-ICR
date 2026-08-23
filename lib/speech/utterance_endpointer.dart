@@ -36,27 +36,33 @@ class UtteranceEndpointer {
   final int speechThreshold;
 
   /// How much accumulated silence after speech ends the utterance --
-  /// pure latency tax on top of the ~100ms match itself, since nothing
-  /// is reported until this elapses.
+  /// pure latency tax on top of the match itself, since nothing is
+  /// reported until this elapses.
   ///
-  /// Lowered from an initial 400ms placeholder to 150ms, then to 80ms,
-  /// after on-device data (Milestone 13 step 5, 2026-08-21/22). 150ms
-  /// still structurally missed a 1000ms recognitionTime window on every
-  /// single response. A fixed-duration onset-triggered capture was tried
-  /// next (`FixedWindowCapture`, since removed): it landed inside the
-  /// window far more often, but a duration short enough to fit
-  /// (400ms) truncated real speech and collapsed match accuracy (4/7
-  /// correct at 600ms down to 1/8 at 400ms, with wrong answers
-  /// clustering on a couple of generic short-clip "attractors" --
-  /// the same failure mode enrollment trimming fixed once already, this
-  /// time on the query side), while a duration long enough to preserve
-  /// accuracy (600ms) missed the window every time. A short hangover
-  /// keeps [UtteranceEndpointer]'s natural per-word sizing (no
-  /// truncation risk for a longer spoken form, no wasted tail on a
-  /// short one) while cutting the pure "wait to confirm silence" tax
-  /// most of the way down -- this is still an on-device guess like every
-  /// other threshold here, not confirmed to actually beat the fixed-
-  /// window approach's timing/accuracy tradeoff yet.
+  /// Lowered from an initial 400ms placeholder to 150ms, then to 80ms
+  /// for live recognition specifically (Milestone 13 step 5,
+  /// 2026-08-21/22), purely to fit inside a 1000ms recognitionTime
+  /// deadline that was, at the time, judged against when matching
+  /// *finished* rather than when speech started. A fixed-duration
+  /// onset-triggered capture was tried in between (`FixedWindowCapture`,
+  /// since removed): it landed inside the window far more often, but a
+  /// duration short enough to fit (400ms) truncated real speech and
+  /// collapsed match accuracy (4/7 correct at 600ms down to 1/8 at
+  /// 400ms, with wrong answers clustering on a couple of generic
+  /// short-clip "attractors" -- the same failure mode enrollment
+  /// trimming fixed once already, this time on the query side), while a
+  /// duration long enough to preserve accuracy (600ms) missed the
+  /// window every time.
+  ///
+  /// Onset-based timing ([onSpeechStarted], Milestone 13, 2026-08-22)
+  /// replaced all of that: the deadline is now judged at speech onset,
+  /// so hangover length no longer affects whether a response counts as
+  /// on-time. `VoiceResponseListener` (2026-08-23) went back to
+  /// matching enrollment's own 500ms hangover for live recognition too,
+  /// since an 80ms hangover was truncating live queries far more
+  /// aggressively than the enrolled references they're matched against
+  /// -- a query/reference capture mismatch, not a genuine accuracy
+  /// tradeoff, once timing pressure was no longer the reason for it.
   final Duration hangoverDuration;
 
   /// Utterances shorter than this are discarded as noise blips rather

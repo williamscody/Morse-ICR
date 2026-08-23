@@ -18,12 +18,30 @@ class CharacterSelector {
 
   final math.Random _random;
 
-  /// Returns a uniformly random character from [characters].
+  /// When false, [next] cycles through [characters] in the order given
+  /// instead of drawing uniformly at random -- a diagnostic-only mode
+  /// (2026-08-23) added at Bill's request, so a repeatable, predictable
+  /// sequence can isolate whether an accuracy issue is confusion between
+  /// specific characters or noise from random draw order. Defaults to
+  /// true (random), preserving existing behavior for anyone who never
+  /// touches the Settings toggle this backs.
+  bool randomOrder = true;
+
+  int _sequentialIndex = 0;
+
+  /// Returns the next character from [characters] -- uniformly at
+  /// random when [randomOrder] is true, or the next one in [characters]'
+  /// own order (wrapping around) when it's false.
   ///
   /// Throws [ArgumentError] if [characters] is empty.
   String next(List<String> characters) {
     if (characters.isEmpty) {
       throw ArgumentError('Cannot select from an empty character set');
+    }
+    if (!randomOrder) {
+      final character = characters[_sequentialIndex % characters.length];
+      _sequentialIndex++;
+      return character;
     }
     return characters[_random.nextInt(characters.length)];
   }

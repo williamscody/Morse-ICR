@@ -1,8 +1,10 @@
+import 'dart:async' show unawaited;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../speech/character_recorder.dart';
+import '../speech/enrollment_diagnostics.dart';
 import '../speech/enrollment_store.dart';
 import '../training/character_set.dart';
 
@@ -62,6 +64,21 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
         _enrolled = characters;
         _loaded = true;
       });
+      // Diagnostic-only (2026-08-23): logs structural stats for the
+      // characters under active confusion investigation -- see
+      // enrollment_diagnostics.dart. Remove once resolved.
+      unawaited(
+        logEnrollmentDiagnostics(widget.store, {
+          'F',
+          'S',
+          'G',
+          'Z',
+          'K',
+          'T',
+          'L',
+          'O',
+        }),
+      );
     });
   }
 

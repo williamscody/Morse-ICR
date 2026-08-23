@@ -10,6 +10,7 @@ void main() {
     expect(settings.morsePitchHz, 600);
     expect(settings.morseVolumePercent, 60);
     expect(settings.voiceVolumePercent, 100);
+    expect(settings.randomCharacterOrder, isTrue);
   });
 
   test('toJson/fromJson round-trips every field', () {
@@ -19,6 +20,7 @@ void main() {
       morsePitchHz: 750,
       morseVolumePercent: 40,
       voiceVolumePercent: 85,
+      randomCharacterOrder: false,
     );
 
     final roundTripped = AppSettings.fromJson(settings.toJson());
@@ -28,6 +30,10 @@ void main() {
     expect(roundTripped.morsePitchHz, settings.morsePitchHz);
     expect(roundTripped.morseVolumePercent, settings.morseVolumePercent);
     expect(roundTripped.voiceVolumePercent, settings.voiceVolumePercent);
+    expect(
+      roundTripped.randomCharacterOrder,
+      settings.randomCharacterOrder,
+    );
   });
 
   test('fromJson falls back to defaults for missing fields -- settings '
@@ -39,6 +45,7 @@ void main() {
     expect(settings.morsePitchHz, 600);
     expect(settings.morseVolumePercent, 60);
     expect(settings.voiceVolumePercent, 100);
+    expect(settings.randomCharacterOrder, isTrue);
   });
 
   test('copyWith replaces only the given fields', () {

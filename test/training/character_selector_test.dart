@@ -48,5 +48,28 @@ void main() {
       }
       expect(sawImmediateRepeat, isTrue);
     });
+
+    test('cycles through the set in order when randomOrder is false', () {
+      final selector = CharacterSelector()..randomOrder = false;
+      const characters = ['A', 'B', 'C'];
+
+      expect(
+        [for (var i = 0; i < 7; i++) selector.next(characters)],
+        ['A', 'B', 'C', 'A', 'B', 'C', 'A'],
+      );
+    });
+
+    test('switching randomOrder back on resumes random draws', () {
+      final selector = CharacterSelector(random: math.Random(1))
+        ..randomOrder = false;
+      const characters = ['A', 'B'];
+
+      selector.next(characters);
+      selector.randomOrder = true;
+
+      for (var i = 0; i < 20; i++) {
+        expect(characters, contains(selector.next(characters)));
+      }
+    });
   });
 }

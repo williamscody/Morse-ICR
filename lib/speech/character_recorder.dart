@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:record/record.dart';
 
+import 'preferred_input_device.dart';
 import 'utterance_endpointer.dart';
 
 /// Thrown when [recordCharacterTakes] can't record because microphone
@@ -62,10 +63,14 @@ Future<List<Uint8List>> recordCharacterTakes(
     if (!await recorder.hasPermission()) throw MicPermissionDenied();
     const sampleRate = 16000;
     final stream = await recorder.startStream(
-      const RecordConfig(
+      RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: sampleRate,
         numChannels: 1,
+        // See preferred_input_device.dart -- avoids a connected
+        // Bluetooth headset's much lower-fidelity mic silently being
+        // used instead of the phone's own.
+        device: await preferredInputDevice(recorder),
       ),
     );
 

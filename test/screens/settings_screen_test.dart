@@ -14,6 +14,7 @@ void main() {
     int morsePitchHz = 600,
     int morseVolumePercent = 60,
     int voiceVolumePercent = 100,
+    bool randomCharacterOrder = true,
     ValueChanged<bool>? onVoiceChanged,
     ValueChanged<bool>? onRecognitionChanged,
     VoidCallback? onOpenVoiceSetup,
@@ -22,6 +23,7 @@ void main() {
     ValueChanged<int>? onMorsePitchChanged,
     ValueChanged<int>? onMorseVolumeChanged,
     ValueChanged<int>? onVoiceVolumeChanged,
+    ValueChanged<bool>? onRandomCharacterOrderChanged,
   }) => SettingsScreen(
     voiceEnabled: voiceEnabled,
     voicePreparing: voicePreparing,
@@ -31,6 +33,7 @@ void main() {
     morsePitchHz: morsePitchHz,
     morseVolumePercent: morseVolumePercent,
     voiceVolumePercent: voiceVolumePercent,
+    randomCharacterOrder: randomCharacterOrder,
     onVoiceChanged: onVoiceChanged ?? (_) {},
     onRecognitionChanged: onRecognitionChanged ?? (_) {},
     onOpenVoiceSetup: onOpenVoiceSetup ?? () {},
@@ -39,6 +42,7 @@ void main() {
     onMorsePitchChanged: onMorsePitchChanged ?? (_) {},
     onMorseVolumeChanged: onMorseVolumeChanged ?? (_) {},
     onVoiceVolumeChanged: onVoiceVolumeChanged ?? (_) {},
+    onRandomCharacterOrderChanged: onRandomCharacterOrderChanged ?? (_) {},
   );
 
   testWidgets('renders the Voice and Speech Recognition switches at the '
@@ -244,4 +248,41 @@ void main() {
 
     expect(changes, [95]);
   });
+
+  testWidgets(
+    'renders the Random Character Order switch at the given initial value',
+    (tester) async {
+      await tester.pumpWidget(wrap(buildScreen(randomCharacterOrder: false)));
+
+      expect(find.text('Random Character Order'), findsOneWidget);
+      expect(
+        tester.widget<Switch>(find.byType(Switch).last).value,
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets(
+    'toggling Random Character Order updates the switch and reports the '
+    'new value',
+    (tester) async {
+      final changes = <bool>[];
+      await tester.pumpWidget(
+        wrap(
+          buildScreen(
+            randomCharacterOrder: true,
+            onRandomCharacterOrderChanged: changes.add,
+          ),
+        ),
+      );
+
+      final toggle = find.byType(Switch).last;
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump();
+
+      expect(changes, [false]);
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+    },
+  );
 }

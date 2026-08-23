@@ -6,6 +6,7 @@ import 'package:record/record.dart';
 import '../debug_log.dart';
 import 'enrollment_store.dart';
 import 'file_enrollment_store.dart';
+import 'preferred_input_device.dart';
 import 'response_listener.dart';
 import 'utterance_endpointer.dart';
 import 'voice_character_matcher.dart';
@@ -17,12 +18,28 @@ import 'voice_character_matcher.dart';
 /// segmented into individual utterances by [UtteranceEndpointer], each
 /// matched against the learner's enrolled recordings.
 ///
-/// `TrainingScreen`'s production listener as of Milestone 13 step 5. Uses
-/// a much shorter [UtteranceEndpointer.hangoverDuration] than
-/// enrollment's own recorder does -- see that field's doc comment for
-/// the on-device history behind this (a fixed-duration onset-triggered
-/// capture was tried in between and reverted: it fit the response
-/// window better but truncated real speech and tanked accuracy).
+/// `TrainingScreen`'s production listener as of Milestone 13 step 5.
+///
+/// Used a much shorter [UtteranceEndpointer.hangoverDuration] (80ms) and
+/// [UtteranceEndpointer.maxUtteranceDuration] (800ms) than enrollment's
+/// own recorder through Milestone 13's timing work, purely to fit inside
+/// the "beat the computer" recognitionTime window -- see that field's
+/// doc comment for the on-device history (a fixed-duration
+/// onset-triggered capture was tried in between and reverted: it fit
+/// the response window better but truncated real speech and tanked
+/// accuracy). Once onset-based timing (Milestone 13, 2026-08-22:
+/// [UtteranceEndpointer.onSpeechStarted]) started judging the deadline
+/// at speech *onset* instead of match completion, that pressure went
+/// away entirely -- capture/match latency no longer affects whether a
+/// response counts as on-time. But the short hangover/max-duration
+/// settings were left in place, meaning every live query was still
+/// being captured under tighter, more truncation-prone conditions than
+/// the enrolled references it's compared against (enrollment uses
+/// 500ms hangover / the 2000ms default max, see
+/// `character_recorder.dart`). Matched to enrollment's settings here
+/// (2026-08-23) to remove that query/reference capture mismatch as a
+/// source of matching error, now that there's no longer a reason not
+/// to.
 class VoiceResponseListener implements ResponseListener {
   VoiceResponseListener({
     VoiceCharacterMatcher? matcher,
@@ -33,10 +50,7 @@ class VoiceResponseListener implements ResponseListener {
            VoiceCharacterMatcher(enrollmentStore ?? FileEnrollmentStore()),
        _endpointer =
            endpointer ??
-           UtteranceEndpointer(
-             hangoverDuration: const Duration(milliseconds: 80),
-             maxUtteranceDuration: const Duration(milliseconds: 800),
-           ) {
+           UtteranceEndpointer(hangoverDuration: const Duration(milliseconds: 500)) {
     _endpointer.onSpeechStarted = _handleSpeechStarted;
   }
 
@@ -89,10 +103,14 @@ class VoiceResponseListener implements ResponseListener {
     _matcher.invalidateCache();
     const sampleRate = 16000;
     final stream = await _recorder.startStream(
-      const RecordConfig(
+      RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: sampleRate,
         numChannels: 1,
+        // See preferred_input_device.dart -- avoids a connected
+        // Bluetooth headset's much lower-fidelity mic silently being
+        // used instead of the phone's own.
+        device: await preferredInputDevice(_recorder),
       ),
     );
     _subscription = stream.listen(_onChunk);
@@ -100,8 +118,36 @@ class VoiceResponseListener implements ResponseListener {
 
   @override
   Future<void> restart() async {
-    _endpointer.reset();
-    _pendingWindowSnapshot = null;
+    // Does nothing (2026-08-23, second reversion after a second
+    // on-device regression -- see git history for the first). This
+    // used to call `_endpointer.reset()` and clear
+    // [_pendingWindowSnapshot]; both are now known actively harmful for
+    // the same underlying reason: `TrainingScreen` calls [restart] on
+    // *every* new character (`onCharacterGenerated`), which can land
+    // while the learner's response to the *previous* character is
+    // still in flight -- captured at onset (fast), but not yet finished
+    // hanging over into a completed utterance (up to ~1.5s later for a
+    // full word plus the 500ms hangover). Clearing [_pendingWindowSnapshot]
+    // here destroys that still-pending onset snapshot before the
+    // utterance completes, so when it finally does, `_onChunk` reads
+    // `_pendingWindowSnapshot` as null and `submitResponse` falls back
+    // to *live* state -- which has by then already advanced to the new
+    // character -- silently reintroducing the exact "judged against
+    // whenever recognition finishes, not when the learner actually
+    // started responding" race onset-based timing (2026-08-22) existed
+    // specifically to eliminate. On-device data (2026-08-23) showed
+    // this precisely: a learner's genuinely correct, cleanly-matched
+    // response to character N was consistently logged as a mismatched
+    // response to character N+1 whenever N+1 followed N within about a
+    // word's length -- read as "character N confused with N+1" at
+    // first, until the pattern turned out to track sequence position
+    // (always the *next* character in a fixed test order), not
+    // acoustics, giving away the real cause. Neither field needs
+    // clearing: [UtteranceEndpointer] guarantees at most one utterance
+    // in flight at a time, and [_pendingWindowSnapshot] is read-and-
+    // cleared synchronously the moment that utterance actually
+    // completes ([_onChunk]), so there's no scenario where leaving both
+    // alone leaks stale state into a later, unrelated utterance.
   }
 
   @override

@@ -74,6 +74,15 @@ class VoiceCharacterMatcher {
     var referenceTakeCount = 0;
     var referenceMfccMicros = 0;
     var dtwMicros = 0;
+    // Diagnostic-only (2026-08-23): every candidate's own best distance,
+    // not just the overall winner's -- the single `bestDistance` log
+    // line can't tell a genuine near-miss (the correct character's
+    // distance was close behind the winner's) apart from a blowout (the
+    // correct character was never competitive at all), which matters
+    // for telling a real acoustic confusion (e.g. F/S) apart from a bad
+    // reference recording. Remove once the current investigation
+    // concludes.
+    final candidateDistances = <String, double>{};
     final loopStopwatch = Stopwatch()..start();
     for (final character in await _store.enrolledCharacters()) {
       if (candidates != null && !candidates.contains(character)) continue;
@@ -96,6 +105,9 @@ class VoiceCharacterMatcher {
         dtwStopwatch.stop();
         dtwMicros += dtwStopwatch.elapsedMicroseconds;
 
+        if (distance < (candidateDistances[character] ?? double.infinity)) {
+          candidateDistances[character] = distance;
+        }
         if (distance < bestDistance) {
           bestDistance = distance;
           bestCharacter = character;
@@ -117,6 +129,16 @@ class VoiceCharacterMatcher {
       'dtw=${dtwMicros ~/ 1000}ms '
       'loop=${loopStopwatch.elapsedMilliseconds}ms '
       'bestDistance=${bestDistance.toStringAsFixed(1)} -> $bestCharacter',
+    );
+    // Diagnostic-only (2026-08-23), see [candidateDistances] above --
+    // every candidate's own closest distance, sorted nearest-first, so
+    // the correct character's rank/distance is visible even when it
+    // didn't win.
+    final rankedCandidates = candidateDistances.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    logDebug(
+      'voice: candidate distances -- '
+      '${rankedCandidates.map((e) => '${e.key}=${e.value.toStringAsFixed(1)}').join(' ')}',
     );
     // Milestone 13 diagnostic-only (2026-08-21): delta coefficients
     // showed no effect on accuracy after being added -- checking

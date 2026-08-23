@@ -20,6 +20,7 @@ class SettingsScreen extends StatefulWidget {
     required this.morsePitchHz,
     required this.morseVolumePercent,
     required this.voiceVolumePercent,
+    required this.randomCharacterOrder,
     required this.onVoiceChanged,
     required this.onRecognitionChanged,
     required this.onOpenVoiceSetup,
@@ -28,6 +29,7 @@ class SettingsScreen extends StatefulWidget {
     required this.onMorsePitchChanged,
     required this.onMorseVolumeChanged,
     required this.onVoiceVolumeChanged,
+    required this.onRandomCharacterOrderChanged,
   });
 
   final bool voiceEnabled;
@@ -38,6 +40,7 @@ class SettingsScreen extends StatefulWidget {
   final int morsePitchHz;
   final int morseVolumePercent;
   final int voiceVolumePercent;
+  final bool randomCharacterOrder;
   final ValueChanged<bool> onVoiceChanged;
   final ValueChanged<bool> onRecognitionChanged;
   final VoidCallback onOpenVoiceSetup;
@@ -46,6 +49,7 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<int> onMorsePitchChanged;
   final ValueChanged<int> onMorseVolumeChanged;
   final ValueChanged<int> onVoiceVolumeChanged;
+  final ValueChanged<bool> onRandomCharacterOrderChanged;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -59,6 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late int _morsePitchHz = widget.morsePitchHz;
   late int _morseVolumePercent = widget.morseVolumePercent;
   late int _voiceVolumePercent = widget.voiceVolumePercent;
+  late bool _randomCharacterOrder = widget.randomCharacterOrder;
 
   @override
   Widget build(BuildContext context) {
@@ -209,6 +214,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       setState(() => _voiceVolumePercent = value);
                       widget.onVoiceVolumeChanged(value);
                     },
+                  ),
+                  const SizedBox(height: 24),
+                  // Diagnostic toggle: off gives a repeatable, predictable
+                  // character sequence instead of a random draw, so an
+                  // accuracy issue under investigation can be isolated
+                  // from random-order noise.
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Random Character Order',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Switch(
+                        value: _randomCharacterOrder,
+                        onChanged: (value) {
+                          setState(() => _randomCharacterOrder = value);
+                          widget.onRandomCharacterOrderChanged(value);
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),
