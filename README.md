@@ -1,5 +1,9 @@
 # Morse ICR
 
+Instant Character Recognition training for Morse Code.
+
+[☕ Support Morse ICR](https://buymeacoffee.com/codycabana)
+
 Morse ICR is a Flutter-based Morse code training app for iOS and Android, built around a "beat the computer" mechanic: the app plays a Morse code character, then gives you a short window to answer it — by speaking or simply recognizing it — before the app's own computer voice announces the character out loud for you. Answering correctly before the computer does is "beating the computer," the app's core training loop.
 
 ## Features
