@@ -92,6 +92,12 @@ Created by K3CDY, [Cody Cabana Productions, LLC](https://codycabanaproductions.c
 
 ---
 
+Acknowledgements:
+- http://morsecode.world - the best online Morse training resource
+- http://CWInnovations.net - the place to lean conversational Morse code
+
+---
+
 ☕ **Enjoying Morse ICR?**  
 If you find the app useful, consider [buying me a coffee](https://buymeacoffee.com/codycabana). It helps support continued development.
 
