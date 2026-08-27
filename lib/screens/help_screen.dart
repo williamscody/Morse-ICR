@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// One entry in the Help screen's table of contents and the matching
 /// body section below it -- [icon]/[color] are shared by both, per
@@ -251,6 +252,7 @@ class _HelpScreenState extends State<HelpScreen> {
                       ),
                       const SizedBox(height: 32),
                     ],
+                    const _CreatedByLink(),
                   ],
                 ),
               ),
@@ -341,6 +343,38 @@ class _HelpSectionView extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// The bottom-of-page attribution line, styled and tappable as a link --
+/// opens the studio site in the device's own browser (`url_launcher`,
+/// the standard Flutter-team package for this; no in-app WebView, since
+/// this is meant to leave the app, not stay in it).
+class _CreatedByLink extends StatelessWidget {
+  const _CreatedByLink();
+
+  static final Uri _url = Uri.parse('https://codycabanaproductions.com');
+
+  Future<void> _open() =>
+      launchUrl(_url, mode: LaunchMode.externalApplication);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: Center(
+        child: InkWell(
+          onTap: _open,
+          child: Text(
+            'Created by K3CDY, Cody Cabana Productions, LLC.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              decoration: TextDecoration.underline,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
