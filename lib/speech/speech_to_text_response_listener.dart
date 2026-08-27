@@ -5,6 +5,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 
 import '../debug_log.dart';
 import 'character_recognizer.dart';
+import 'recognition_sound_muter.dart';
 import 'response_listener.dart';
 
 /// Wraps package:speech_to_text to implement [ResponseListener]
@@ -172,6 +173,7 @@ class SpeechToTextResponseListener
   Future<void> startListening(ResponseCallback onRecognized) async {
     _onRecognized = onRecognized;
     _shouldBeListening = true;
+    await RecognitionSoundMuter.mute();
     final available = await _speechToText.initialize(onStatus: _onStatus);
     // Logged (2026-08-28) after an on-device session (35WPM/500ms, app
     // presumably backgrounded overnight beforehand) produced *zero*
@@ -223,7 +225,14 @@ class SpeechToTextResponseListener
   Future<void> stopListening() async {
     _shouldBeListening = false;
     _onRecognized = null;
-    await _speechToText.stop();
+    try {
+      await _speechToText.stop();
+    } finally {
+      // Always restore the notification stream even if stop() itself
+      // throws -- leaving it muted device-wide would be far worse than
+      // the chime this silences in the first place.
+      await RecognitionSoundMuter.unmute();
+    }
   }
 
   Future<void> _listen() async {

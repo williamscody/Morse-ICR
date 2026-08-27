@@ -175,6 +175,36 @@ final List<_HelpSection> _helpSections = [
           'that is worth reporting -- these smaller misses are not.',
     ],
   ),
+  _HelpSection(
+    title: 'Voice Quality',
+    icon: Icons.high_quality,
+    color: Colors.cyan,
+    paragraphs: [
+      'The computer\'s spoken voice comes from your device\'s own '
+          'text-to-speech system, not from Morse ICR itself -- so its '
+          'clarity depends on which voice your device has installed and '
+          'selected.',
+      '- iOS: open Settings > Accessibility > Spoken Content > Voices > '
+          'English, tap Samantha, then tap the ⓘ info button next to it '
+          'and download the Enhanced (or Premium, if offered) quality. '
+          'Morse ICR automatically speaks with the highest-quality '
+          'English voice it finds installed, so there is nothing to '
+          'select inside the app itself -- once Samantha (Enhanced) '
+          'finishes downloading, the app starts using it right away.',
+      '- Android: open Settings > System > Languages & input > '
+          'Text-to-speech output (the exact path varies a bit by device) '
+          'and tap the gear icon next to the preferred engine, usually '
+          'Google Text-to-speech Engine. Under Language, choose English '
+          '(United States), then preview the available voices and pick '
+          'the clearest one -- favor a voice labeled Network over Local, '
+          'since Network voices use higher-quality neural synthesis '
+          'closer to Samantha (Enhanced)\'s naturalness. Android has no '
+          'single named voice equivalent to Samantha, and unlike iOS, '
+          'Morse ICR does not pick a voice for you here -- whichever '
+          'voice you set as the system default is the one it speaks '
+          'with.',
+    ],
+  ),
 ];
 
 /// The in-app Help page: a table of contents at the top whose entries

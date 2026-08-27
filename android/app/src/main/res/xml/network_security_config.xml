@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- just_audio's custom StreamAudioSource (see InMemoryAudioSource) serves
+     in-memory audio to ExoPlayer through a local HTTP proxy on 127.0.0.1.
+     Android 9+ blocks cleartext HTTP by default, including to localhost,
+     which silently kills all playback with CleartextNotPermittedException.
+     This permits cleartext only to loopback, not to the network at large. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>
