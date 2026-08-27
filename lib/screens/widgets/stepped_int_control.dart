@@ -171,15 +171,15 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
                 if (isEditing) ...[
                   IconButton(
                     iconSize: 40,
-                    tooltip: 'Done',
-                    icon: const Icon(Icons.check_circle, color: Colors.green),
-                    onPressed: _confirmEdit,
-                  ),
-                  IconButton(
-                    iconSize: 40,
                     tooltip: 'Cancel',
                     icon: const Icon(Icons.cancel, color: Colors.red),
                     onPressed: _cancelEdit,
+                  ),
+                  IconButton(
+                    iconSize: 40,
+                    tooltip: 'Done',
+                    icon: const Icon(Icons.check_circle, color: Colors.green),
+                    onPressed: _confirmEdit,
                   ),
                 ],
               ],

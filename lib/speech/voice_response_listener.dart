@@ -40,7 +40,9 @@ import 'voice_character_matcher.dart';
 /// (2026-08-23) to remove that query/reference capture mismatch as a
 /// source of matching error, now that there's no longer a reason not
 /// to.
-class VoiceResponseListener implements ResponseListener {
+class VoiceResponseListener
+    with OnsetDetectingResponseListener
+    implements ResponseListener {
   VoiceResponseListener({
     VoiceCharacterMatcher? matcher,
     EnrollmentStore? enrollmentStore,
@@ -50,7 +52,9 @@ class VoiceResponseListener implements ResponseListener {
            VoiceCharacterMatcher(enrollmentStore ?? FileEnrollmentStore()),
        _endpointer =
            endpointer ??
-           UtteranceEndpointer(hangoverDuration: const Duration(milliseconds: 500)) {
+           UtteranceEndpointer(
+             hangoverDuration: const Duration(milliseconds: 500),
+           ) {
     _endpointer.onSpeechStarted = _handleSpeechStarted;
   }
 
@@ -75,16 +79,12 @@ class VoiceResponseListener implements ResponseListener {
     _activeCharacters = characters.toSet();
   }
 
-  /// Lets `TrainingScreen` wire this listener's speech-onset detection
-  /// to `TrainingEngine.captureResponseWindow`, so [_handleSpeechStarted]
-  /// can snapshot "beat the computer" timing the instant the learner
-  /// starts responding, well before recognition finishes resolving what
-  /// they said (Milestone 13, 2026-08-22 -- see
-  /// `TrainingEngine.submitResponse`'s `at` parameter). Not part of
-  /// [ResponseListener] itself, same precedent as [updateActiveCharacters]:
-  /// only a listener that can detect onset separately from a finished
-  /// result can usefully support this.
-  ResponseWindowSnapshot Function()? captureResponseWindow;
+  // [captureResponseWindow] (from [OnsetDetectingResponseListener]) is
+  // what `TrainingScreen` wires to `TrainingEngine.captureResponseWindow`
+  // -- [_handleSpeechStarted] below calls it to snapshot "beat the
+  // computer" timing the instant the learner starts responding, well
+  // before recognition finishes resolving what they said (Milestone 13,
+  // 2026-08-22 -- see `TrainingEngine.submitResponse`'s `at` parameter).
 
   void _handleSpeechStarted() {
     _pendingWindowSnapshot = captureResponseWindow?.call();

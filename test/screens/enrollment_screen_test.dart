@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/screens/enrollment_screen.dart';
 import 'package:morse_icr/speech/character_recorder.dart';
 import 'package:morse_icr/speech/enrollment_store.dart';
+import 'package:morse_icr/speech/response_listener.dart';
+
+/// Lets Test-mode tests trigger a "recognized" callback directly, the
+/// same fake-listener pattern `training_screen_test.dart` uses, without
+/// touching a real microphone.
+class _FakeResponseListener implements ResponseListener {
+  final List<String> stopListeningCalls = [];
+  ResponseCallback? onRecognized;
+
+  @override
+  Future<void> startListening(ResponseCallback onRecognized) async {
+    this.onRecognized = onRecognized;
+  }
+
+  @override
+  Future<void> restart() async {}
+
+  @override
+  Future<void> stopListening() async {
+    onRecognized = null;
+    stopListeningCalls.add('stop');
+  }
+}
 
 class _FakeEnrollmentStore implements EnrollmentStore {
   _FakeEnrollmentStore([Set<String>? enrolled])
@@ -217,4 +241,368 @@ void main() {
       );
     },
   );
+
+  testWidgets('the Audition toggle changes what tapping a character chip does, '
+      "rather than a small per-chip button that's easy to mis-tap", (
+    tester,
+  ) async {
+    final store = _FakeEnrollmentStore({'K'});
+    final played = <String>[];
+    var enrollCalls = 0;
+    Future<void> recordingPlayTakes(
+      List<Uint8List> pcm16Takes, {
+      void Function(int takeNumber)? onTakePlaying,
+    }) async {
+      played.add('played');
+    }
+
+    Future<List<Uint8List>> countingRecordTakes(
+      int count, {
+      void Function(int takeNumber)? onTakeRecorded,
+    }) async {
+      enrollCalls++;
+      return fakeRecordTakes(count, onTakeRecorded: onTakeRecorded);
+    }
+
+    await tester.pumpWidget(
+      wrap(
+        EnrollmentScreen(
+          store: store,
+          recordTakes: countingRecordTakes,
+          playTakes: recordingPlayTakes,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Off by default -- tapping 'K' still (re-)enrolls it, unchanged
+    // from before this control existed.
+    await tester.tap(find.widgetWithText(FilterChip, 'K'));
+    await tester.pump();
+    await tester.pump();
+    expect(enrollCalls, 1);
+    expect(played, isEmpty);
+
+    // Once toggled on, the same tap plays it back instead.
+    await tester.tap(find.widgetWithText(FilterChip, 'Audition'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilterChip, 'K'));
+    await tester.pump();
+    await tester.pump();
+    expect(played, ['played']);
+    expect(enrollCalls, 1);
+  });
+
+  testWidgets(
+    'in Audition mode, an unenrolled character does nothing when tapped -- '
+    'nothing has been saved for it to play back',
+    (tester) async {
+      final store = _FakeEnrollmentStore();
+      var played = false;
+      Future<void> recordingPlayTakes(
+        List<Uint8List> pcm16Takes, {
+        void Function(int takeNumber)? onTakePlaying,
+      }) async {
+        played = true;
+      }
+
+      await tester.pumpWidget(
+        wrap(
+          EnrollmentScreen(
+            store: store,
+            recordTakes: fakeRecordTakes,
+            playTakes: recordingPlayTakes,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilterChip, 'Audition'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilterChip, 'A'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(played, isFalse);
+    },
+  );
+
+  testWidgets("tapping an enrolled character in Audition mode plays back every "
+      'saved take, in order, without re-recording it', (tester) async {
+    final store = _FakeEnrollmentStore()
+      ..recordings['K'] = [
+        Uint8List.fromList([1]),
+        Uint8List.fromList([2]),
+        Uint8List.fromList([3]),
+      ];
+    final played = <List<Uint8List>>[];
+    Future<void> recordingPlayTakes(
+      List<Uint8List> pcm16Takes, {
+      void Function(int takeNumber)? onTakePlaying,
+    }) async {
+      played.add(pcm16Takes);
+      for (var i = 1; i <= pcm16Takes.length; i++) {
+        onTakePlaying?.call(i);
+      }
+    }
+
+    await tester.pumpWidget(
+      wrap(
+        EnrollmentScreen(
+          store: store,
+          recordTakes: fakeRecordTakes,
+          playTakes: recordingPlayTakes,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Audition'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilterChip, 'K'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(played, [store.recordings['K']]);
+    // Never re-recorded -- the store's original takes are untouched.
+    expect(store.recordings['K'], [
+      Uint8List.fromList([1]),
+      Uint8List.fromList([2]),
+      Uint8List.fromList([3]),
+    ]);
+  });
+
+  testWidgets('shows which take is currently playing while auditioning', (
+    tester,
+  ) async {
+    final store = _FakeEnrollmentStore()
+      ..recordings['K'] = [Uint8List(0), Uint8List(0), Uint8List(0)];
+    final unblock = Completer<void>();
+    Future<void> blockingPlayTakes(
+      List<Uint8List> pcm16Takes, {
+      void Function(int takeNumber)? onTakePlaying,
+    }) async {
+      onTakePlaying?.call(2);
+      await unblock.future;
+    }
+
+    await tester.pumpWidget(
+      wrap(
+        EnrollmentScreen(
+          store: store,
+          recordTakes: fakeRecordTakes,
+          playTakes: blockingPlayTakes,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Audition'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilterChip, 'K'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Playing K, take 2 of 3...'), findsOneWidget);
+
+    unblock.complete();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Playing K, take 2 of 3...'), findsNothing);
+  });
+
+  testWidgets('turning Test mode on starts listening, and each recognized '
+      'character outlines its chip', (tester) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(
+      wrap(
+        EnrollmentScreen(
+          store: _FakeEnrollmentStore({'K', 'F'}),
+          recordTakes: fakeRecordTakes,
+          responseListener: listener,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
+      isNull,
+    );
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+    await tester.pump();
+
+    expect(listener.onRecognized, isNotNull);
+    listener.onRecognized!('K');
+    await tester.pump();
+
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
+      isNotNull,
+    );
+    // Not recognized -- no outline.
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'F')).side,
+      isNull,
+    );
+  });
+
+  testWidgets('a second recognized character outlines its chip too, without '
+      'removing the outline from the first', (tester) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(
+      wrap(
+        EnrollmentScreen(
+          store: _FakeEnrollmentStore({'K', 'F'}),
+          recordTakes: fakeRecordTakes,
+          responseListener: listener,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+    await tester.pump();
+
+    listener.onRecognized!('K');
+    await tester.pump();
+    listener.onRecognized!('F');
+    await tester.pump();
+
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
+      isNotNull,
+    );
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'F')).side,
+      isNotNull,
+    );
+  });
+
+  testWidgets(
+    'turning Test mode off stops listening and clears every outline',
+    (tester) async {
+      final listener = _FakeResponseListener();
+      await tester.pumpWidget(
+        wrap(
+          EnrollmentScreen(
+            store: _FakeEnrollmentStore({'K'}),
+            recordTakes: fakeRecordTakes,
+            responseListener: listener,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+      await tester.pump();
+      listener.onRecognized!('K');
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+      await tester.pump();
+
+      expect(listener.stopListeningCalls, ['stop']);
+      expect(
+        tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
+        isNull,
+      );
+      // The chip's enrolled/selected state is untouched by Test mode.
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
+            .selected,
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets('Test mode disables tapping the character grid and the Audition '
+      'toggle, and Audition disables the Test toggle', (tester) async {
+    final listener = _FakeResponseListener();
+    var enrollCalls = 0;
+    Future<List<Uint8List>> countingRecordTakes(
+      int count, {
+      void Function(int takeNumber)? onTakeRecorded,
+    }) async {
+      enrollCalls++;
+      return fakeRecordTakes(count, onTakeRecorded: onTakeRecorded);
+    }
+
+    await tester.pumpWidget(
+      wrap(
+        EnrollmentScreen(
+          store: _FakeEnrollmentStore(),
+          recordTakes: countingRecordTakes,
+          responseListener: listener,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+    await tester.pump();
+
+    // Grid tap does nothing while Test mode is on.
+    await tester.tap(find.widgetWithText(FilterChip, 'K'));
+    await tester.pump();
+    expect(enrollCalls, 0);
+
+    // Audition can't be turned on while Test mode is on.
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'Audition'))
+          .onSelected,
+      isNull,
+    );
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+    await tester.pump();
+
+    // And the reverse: Test can't be turned on while Audition is on.
+    await tester.tap(find.widgetWithText(FilterChip, 'Audition'));
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'Test'))
+          .onSelected,
+      isNull,
+    );
+  });
+
+  testWidgets('leaving the screen while Test mode is on stops listening', (
+    tester,
+  ) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(
+      wrap(
+        Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => EnrollmentScreen(
+                  store: _FakeEnrollmentStore(),
+                  recordTakes: fakeRecordTakes,
+                  responseListener: listener,
+                ),
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Test'));
+    await tester.pump();
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(listener.stopListeningCalls, ['stop']);
+  });
 }

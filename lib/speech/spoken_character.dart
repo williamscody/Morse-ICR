@@ -1,9 +1,5 @@
 /// Explicit spoken forms for every character the trainer can announce
-/// (morse_icr_spec.md section 28's "computer voice"), and reused by
-/// character_recognizer.dart to help match the learner's own spoken
-/// responses back to a character (section 27) -- public so that
-/// reverse lookup doesn't duplicate, and risk drifting from, these
-/// spellings.
+/// (morse_icr_spec.md section 28's "computer voice").
 ///
 /// Letters and digits are spelled out in full rather than handed to the
 /// TTS engine as a bare token (e.g. "y" or "9") and left to its own
@@ -59,9 +55,7 @@ const Map<String, String> spokenNames = {
 /// "." and "/" are the two punctuation characters section 35 lets the
 /// learner choose an alternate spoken form for -- "Dot" vs "Period", and
 /// "Slash" vs "Stroke" -- special-cased here rather than in [spokenNames]
-/// itself, since that map doubles as the reverse-lookup table
-/// [character_recognizer.dart] uses to recognize whichever form the
-/// learner says regardless of which one the computer currently speaks.
+/// itself.
 String spokenTextFor(
   String character, {
   bool speakPeriodAsDot = true,

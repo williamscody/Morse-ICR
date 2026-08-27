@@ -9,7 +9,14 @@ import 'package:flutter/foundation.dart';
 /// confirmed fixed on-device.
 final ValueNotifier<List<String>> debugLogEntries = ValueNotifier([]);
 
+// 2026-08-30: on-device diagnostic logging turned off now that Milestone
+// 13's speech-recognition timing work is done -- Bill asked for it off
+// and the on-screen panel hidden. Left as a flip-able flag (not deleted)
+// since the next hard-to-diagnose on-device bug will want this back.
+const bool _loggingEnabled = false;
+
 void logDebug(String message) {
+  if (!_loggingEnabled) return;
   final now = DateTime.now();
   final timestamp =
       '${now.hour.toString().padLeft(2, '0')}:'

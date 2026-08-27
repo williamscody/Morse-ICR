@@ -405,9 +405,11 @@ void main() {
     });
 
     test(
-      'submitResponse does not fire onCorrectResponse once the recognition '
-      'deadline has passed, even if the response arrives before the next '
-      "character supersedes it -- a late response didn't beat the computer",
+      'submitResponse with no `at` snapshot still fires onCorrectResponse '
+      'for a response that arrives after the recognition deadline has '
+      'passed, as long as the turn is still pending -- a listener with no '
+      'onset hook to provide `at` (package:speech_to_text) gets judged '
+      'against the pending-turn window instead of the live-state deadline',
       () async {
         final player = _RecordingPlayer();
         final engine = TrainingEngine(turnPlayer: player);
@@ -419,12 +421,64 @@ void main() {
         // character's own audio+wait don't reopen it again until
         // ~70+30=100ms. 85ms sits comfortably in between -- after the
         // deadline, before the next character.
+        //
+        // On-device data (2026-08-26, 30WPM/800ms,
+        // SpeechToTextResponseListener) found every single response in a
+        // session arriving in exactly this position -- after the turn it
+        // answered had already closed, sometimes with the *next* turn's
+        // own window already open -- and the old strict live-state check
+        // this replaced rejected every one of them, scoring the whole
+        // session 0 despite the recognizer transcribing every character
+        // correctly.
         engine.start(
           characters: const ['E'],
           wpm: 40,
           recognitionTime: const Duration(milliseconds: 40),
         );
         await Future<void>.delayed(const Duration(milliseconds: 85));
+        engine.submitResponse('E');
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        await engine.stop();
+
+        expect(correct, ['E']);
+      },
+    );
+
+    test(
+      'submitResponse with no `at` snapshot does not fire onCorrectResponse '
+      'once the pending-response timeout has actually elapsed -- a '
+      "no-`at` listener still has *some* bound, it's just the pending-turn "
+      'window rather than the strict live-state deadline',
+      () async {
+        final player = _RecordingPlayer();
+        final engine = TrainingEngine(
+          turnPlayer: player,
+          pendingResponseTimeout: const Duration(milliseconds: 30),
+        );
+        final correct = <String>[];
+        engine.onCorrectResponse = correct.add;
+
+        // Eight distinct characters, not just ['E'] -- with a single
+        // repeating character the loop cycles back to a *fresh* 'E' turn
+        // well within the wait below, which this late 'E' would wrongly
+        // (but correctly, per this same fix) get credited against,
+        // defeating the point of this test. Non-random order so 'E' is
+        // definitely first, and long enough (8 x ~28ms turns, ~224ms per
+        // full cycle) that the 200ms wait below lands well inside the
+        // first cycle rather than looping back around to 'E' again.
+        engine.randomCharacterOrder = false;
+        engine.start(
+          characters: const ['E', 'X', 'Y', 'Z', 'W', 'V', 'U', 'T'],
+          wpm: 150,
+          recognitionTime: const Duration(milliseconds: 20),
+        );
+        // Generously past both 'E''s window close (~28ms) and its 30ms
+        // pending timeout (~58ms) -- [_finalizeMissed] has long since
+        // evicted that turn from [_pendingTurns] by the time this
+        // arrives. Not timed tight against the ~58ms boundary itself:
+        // Timer firing isn't precise enough under test-runner load for a
+        // narrow margin there to be reliable.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
         engine.submitResponse('E');
         await Future<void>.delayed(const Duration(milliseconds: 5));
         await engine.stop();
@@ -488,23 +542,26 @@ void main() {
       final correct = <String>[];
       engine.onCorrectResponse = correct.add;
 
+      engine.randomCharacterOrder = false;
       engine.start(
-        characters: const ['E'],
+        characters: const ['E', 'F'],
         wpm: 150,
-        recognitionTime: const Duration(milliseconds: 200),
+        recognitionTime: const Duration(milliseconds: 20),
       );
-      // The engine is awaiting 'E' throughout (only one character in
-      // the set), but the snapshot claims this response started for
-      // 'Q' with its own window open -- it should be credited to 'Q',
-      // not rejected for not matching the live awaiting character, so
-      // a response that started before a fast turn transition still
-      // gets attributed correctly once recognition resolves it later.
-      await Future<void>.delayed(const Duration(milliseconds: 15));
-      engine.submitResponse('Q', at: (character: 'Q', windowOpen: true));
+      // By 60ms 'E's own turn (~28ms total) has long since finished and
+      // the engine has moved on to 'F' -- but the snapshot claims this
+      // response started for 'E' with its own window open, back when
+      // 'E' was still current. It should be credited to 'E', not
+      // rejected (or misattributed to 'F') for not matching whatever's
+      // currently awaited, so a response that started before a fast
+      // turn transition still gets attributed correctly once recognition
+      // resolves it later.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      engine.submitResponse('E', at: (character: 'E', windowOpen: true));
       await Future<void>.delayed(const Duration(milliseconds: 10));
       await engine.stop();
 
-      expect(correct, ['Q']);
+      expect(correct, ['E']);
     });
 
     test(
@@ -520,6 +577,225 @@ void main() {
         expect(correct, isEmpty);
       },
     );
+
+    test('onMissedResponse fires once the window closes when nothing was '
+        'ever submitted for that character', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final missed = <String>[];
+      engine.onMissedResponse = missed.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await engine.stop();
+
+      expect(missed, isNotEmpty);
+      expect(missed, everyElement('E'));
+    });
+
+    test('onMissedResponse fires when a wrong character is submitted before '
+        "the window closes -- it didn't beat the computer with the right "
+        'answer', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final missed = <String>[];
+      final correct = <String>[];
+      engine.onMissedResponse = missed.add;
+      engine.onCorrectResponse = correct.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      engine.submitResponse('Z');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await engine.stop();
+
+      expect(missed, ['E']);
+      expect(correct, isEmpty);
+    });
+
+    test('onMissedResponse fires when the correct character is submitted '
+        "only after its window already closed -- late doesn't beat the "
+        'computer', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final missed = <String>[];
+      engine.onMissedResponse = missed.add;
+
+      // Same timing as the existing late-response onCorrectResponse test
+      // above: window opens ~30ms, closes ~70ms; submit at 85ms is late.
+      engine.start(
+        characters: const ['E'],
+        wpm: 40,
+        recognitionTime: const Duration(milliseconds: 40),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 85));
+      engine.submitResponse('E');
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await engine.stop();
+
+      expect(missed, ['E']);
+    });
+
+    test('onMissedResponse does not fire once onCorrectResponse already has '
+        'for that character', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final missed = <String>[];
+      final correct = <String>[];
+      engine.onMissedResponse = missed.add;
+      engine.onCorrectResponse = correct.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 15));
+      engine.submitResponse('E');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await engine.stop();
+
+      expect(correct, ['E']);
+      expect(missed, isEmpty);
+    });
+
+    test('onMissedResponse does not fire for a response whose onset was '
+        'within the window even though its match only resolves after the '
+        'window closed -- the bug this whole hook exists to avoid '
+        '(2026-08-23 on-device: matching routinely takes hundreds of ms '
+        'past window-close, and firing at close time raced that, wrongly '
+        'flagging on-time responses as missed)', () async {
+      // _TailedPlayer, not _RecordingPlayer: this specifically needs the
+      // next turn to *not* start immediately once the window closes, the
+      // same real-world gap (spoken-answer playback) that makes the fix
+      // work in practice -- see its own doc comment.
+      final player = _TailedPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final missed = <String>[];
+      final correct = <String>[];
+      engine.onMissedResponse = missed.add;
+      engine.onCorrectResponse = correct.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 20),
+      );
+      // Mirrors the existing "credits a response using an `at` snapshot"
+      // test: live windowOpen is long since false by 50ms, but the
+      // snapshot says the response's onset happened while it was still
+      // open, so onCorrectResponse fires -- and, critically, that must
+      // stop onMissedResponse from also firing for the same character.
+      // Still well before the next turn begins (~228ms away, thanks to
+      // _TailedPlayer), so this response and the later stop() below both
+      // still apply to *this* turn, not a subsequent one.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      engine.submitResponse('E', at: (character: 'E', windowOpen: true));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await engine.stop();
+
+      expect(correct, ['E']);
+      expect(missed, isEmpty);
+    });
+
+    test('onMissedResponse does not fire for a response whose credit lands '
+        'after several *later* turns have already begun -- the deferred-'
+        'to-the-next-turn design this replaced (2026-08-24 on-device, '
+        '24WPM/700ms: one character reported 5 misses despite genuinely '
+        'being answered correctly 4 of those 5 times, because its credit '
+        "routinely arrived after the *next* turn had already started, "
+        "not just the same one)", () async {
+      final player = _RecordingPlayer();
+      // A generous pending-response timeout relative to how fast
+      // _RecordingPlayer cycles through turns (no playback tail at all)
+      // -- several turns' worth of real time, not just one.
+      final engine = TrainingEngine(
+        turnPlayer: player,
+        pendingResponseTimeout: const Duration(milliseconds: 500),
+      );
+      final missed = <String>[];
+      final correct = <String>[];
+      engine.onMissedResponse = missed.add;
+      engine.onCorrectResponse = correct.add;
+
+      engine.randomCharacterOrder = false;
+      engine.start(
+        characters: const ['A', 'B', 'C', 'D'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 5),
+      );
+      // Each turn here is on the order of a few tens of ms, so by 150ms
+      // several full turns past 'A' -- B, C, D, and around again -- have
+      // already started and closed their own windows. This is still a
+      // snapshot showing 'A''s window was genuinely open at onset, the
+      // same shape a real recognizer's hangover+match latency produces.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      engine.submitResponse('A', at: (character: 'A', windowOpen: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await engine.stop();
+
+      expect(correct, contains('A'));
+      expect(missed, isNot(contains('A')));
+    });
+
+    test('onMissedResponse still fires for a genuinely uncredited turn once '
+        'its pending-response timeout elapses, even with no stop() to force '
+        'it', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(
+        turnPlayer: player,
+        pendingResponseTimeout: const Duration(milliseconds: 30),
+      );
+      final missed = <String>[];
+      engine.onMissedResponse = missed.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 20),
+      );
+      // Past the window close (~28ms) but before the 30ms pending
+      // timeout has elapsed -- nothing reported yet.
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(missed, isEmpty);
+
+      // Past the timeout now, still without stopping the engine.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(missed, contains('E'));
+
+      await engine.stop();
+    });
+
+    test('stopping mid-recognition-wait does not fire onMissedResponse for '
+        'the in-progress character', () async {
+      final player = _RecordingPlayer();
+      final engine = TrainingEngine(turnPlayer: player);
+      final missed = <String>[];
+      engine.onMissedResponse = missed.add;
+
+      engine.start(
+        characters: const ['E'],
+        wpm: 150,
+        recognitionTime: const Duration(milliseconds: 200),
+      );
+      // Stop well within the recognition window so the pending
+      // _windowCloseTimer is cancelled rather than left to fire.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await engine.stop();
+
+      expect(missed, isEmpty);
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(missed, isEmpty);
+    });
 
     test('pre-fetches the next character during the recognition-time wait '
         'and plays it via playPrepared instead of playTurn', () async {
@@ -696,6 +972,38 @@ class _RecordingPlayer extends TurnPlayer {
     played.add(character);
     wpms.add(wpm);
     return _timingFor(character, wpm, recognitionTime, extraGap: extraGap);
+  }
+}
+
+/// Like [_RecordingPlayer], but reports a [TurnTiming.totalDuration] well
+/// past [TurnTiming.answerStart] -- simulating the spoken-answer playback
+/// tail every real turn with a cached TTS answer has, which is what gives
+/// a still-resolving match genuine room to credit the *same* turn before
+/// the next one begins. [_RecordingPlayer]'s lack of any such tail is
+/// fine for tests that don't care about turn-to-turn timing gaps, but
+/// hides exactly the race [onMissedResponse]'s deferred-check design
+/// depends on not existing in practice.
+class _TailedPlayer extends TurnPlayer {
+  @override
+  Future<TurnTiming> playTurn(
+    String character,
+    double wpm,
+    Duration recognitionTime, {
+    required bool includeAnswer,
+    required Duration extraGap,
+  }) async {
+    final timing = _timingFor(
+      character,
+      wpm,
+      recognitionTime,
+      extraGap: extraGap,
+    );
+    return TurnTiming(
+      morseEnd: timing.morseEnd,
+      answerStart: timing.answerStart,
+      totalDuration: timing.answerStart + const Duration(milliseconds: 200),
+      hasAnswer: true,
+    );
   }
 }
 

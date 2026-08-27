@@ -117,6 +117,30 @@ void main() {
       },
     );
 
+    test(
+      'still matches correctly once there is enough enrollment data '
+      '(>=2 characters, >=2 takes each) for coefficient weighting to '
+      'engage',
+      () async {
+        final store = _FakeEnrollmentStore({
+          'A': [
+            sineWavePcm16(300),
+            sineWavePcm16(310, durationSeconds: 0.45),
+          ],
+          'B': [
+            sineWavePcm16(900),
+            sineWavePcm16(890, durationSeconds: 0.55),
+          ],
+        });
+        final matcher = VoiceCharacterMatcher(store);
+        final query = sineWavePcm16(300, durationSeconds: 0.55);
+
+        final result = await matcher.match(query, maxDistance: 1000);
+
+        expect(result, 'A');
+      },
+    );
+
     test('matches on the closest of a character\'s several enrolled takes, '
         'not just its first', () async {
       final store = _FakeEnrollmentStore({

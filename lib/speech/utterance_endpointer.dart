@@ -29,6 +29,7 @@ class UtteranceEndpointer {
     this.hangoverDuration = const Duration(milliseconds: 150),
     this.minUtteranceDuration = const Duration(milliseconds: 150),
     this.maxUtteranceDuration = const Duration(milliseconds: 2000),
+    this.preRollDuration = const Duration(milliseconds: 150),
   });
 
   /// PCM16 peak-amplitude (0-32767) a chunk must cross to count as
@@ -73,6 +74,17 @@ class UtteranceEndpointer {
   /// pauses, so a stuck/loud input can't buffer forever.
   final Duration maxUtteranceDuration;
 
+  /// How much audio immediately before [speechThreshold] is first
+  /// crossed gets prepended to the emitted utterance.
+  ///
+  /// Onset consonants (word-initial aspiration, fricatives) typically
+  /// sit 20-30dB below the vowel that follows, often below
+  /// [speechThreshold] itself -- without this, the first real evidence
+  /// of exactly the sounds that separate confusable pairs (e.g. the
+  /// "f" of "eff" vs. "ess") gets clipped before the peak-amplitude
+  /// detector ever notices speech has started.
+  final Duration preRollDuration;
+
   /// Called the instant a chunk first crosses [speechThreshold] -- i.e.
   /// speech onset -- well before [addChunk] eventually returns the
   /// complete utterance once silence (or [maxUtteranceDuration]) ends
@@ -91,6 +103,27 @@ class UtteranceEndpointer {
   Duration _bufferedDuration = Duration.zero;
   Duration _silenceDuration = Duration.zero;
 
+  // Bytes appended to [_buffer] since the last chunk that actually
+  // crossed [speechThreshold] -- i.e. exactly the trailing-silence
+  // (hangover) tail, tracked so [_endUtterance] can strip it back off.
+  // The hangover window exists purely to *detect* that speech has
+  // ended; once it has, that silence is dead weight in the stored
+  // clip. DTW's distance normalizes by total path length (see
+  // dtw.dart), so padding every reference and query with near-zero-
+  // cost silence-to-silence frames compresses every match's distance
+  // toward every other match's, which is a direct mechanical
+  // contributor to on-device data (Milestone 13, 2026-08-23) showing
+  // correct and incorrect matches occupying overlapping distance
+  // ranges with no clean separating threshold.
+  int _trailingSilenceBytes = 0;
+
+  // Rolling window of the audio seen while *not* speaking, so it can
+  // be prepended once speech starts -- see [preRollDuration]. Chunks
+  // are recorded pre-paired with their own duration since chunk sizes
+  // (and therefore per-chunk durations) aren't fixed.
+  final List<(Uint8List, Duration)> _preRollChunks = [];
+  Duration _preRollBuffered = Duration.zero;
+
   /// Feeds one chunk of raw PCM16 bytes, captured over [chunkDuration].
   /// Returns the completed utterance's raw PCM16 bytes once an endpoint
   /// is reached, or null while still accumulating (or if a completed
@@ -99,19 +132,39 @@ class UtteranceEndpointer {
     final isSpeech = _peakAmplitude(pcm16Chunk) >= speechThreshold;
 
     if (!_speaking) {
-      if (!isSpeech) return null;
+      if (!isSpeech) {
+        _preRollChunks.add((pcm16Chunk, chunkDuration));
+        _preRollBuffered += chunkDuration;
+        while (_preRollBuffered > preRollDuration &&
+            _preRollChunks.length > 1) {
+          final (_, removedDuration) = _preRollChunks.removeAt(0);
+          _preRollBuffered -= removedDuration;
+        }
+        return null;
+      }
       _speaking = true;
       _buffer.clear();
       _bufferedDuration = Duration.zero;
       _silenceDuration = Duration.zero;
+      _trailingSilenceBytes = 0;
+      for (final (preRollChunk, preRollChunkDuration) in _preRollChunks) {
+        _buffer.add(preRollChunk);
+        _bufferedDuration += preRollChunkDuration;
+      }
+      _preRollChunks.clear();
+      _preRollBuffered = Duration.zero;
       onSpeechStarted?.call();
     }
 
     _buffer.add(pcm16Chunk);
     _bufferedDuration += chunkDuration;
-    _silenceDuration = isSpeech
-        ? Duration.zero
-        : _silenceDuration + chunkDuration;
+    if (isSpeech) {
+      _silenceDuration = Duration.zero;
+      _trailingSilenceBytes = 0;
+    } else {
+      _silenceDuration += chunkDuration;
+      _trailingSilenceBytes += pcm16Chunk.length;
+    }
 
     final endpointReached =
         _silenceDuration >= hangoverDuration ||
@@ -128,15 +181,19 @@ class UtteranceEndpointer {
     _buffer.clear();
     _bufferedDuration = Duration.zero;
     _silenceDuration = Duration.zero;
+    _trailingSilenceBytes = 0;
   }
 
   Uint8List? _endUtterance() {
     _speaking = false;
     final tooShort = _bufferedDuration < minUtteranceDuration;
-    final bytes = _buffer.toBytes();
+    final allBytes = _buffer.toBytes();
+    final trimmedLength = allBytes.length - _trailingSilenceBytes;
+    final bytes = allBytes.sublist(0, trimmedLength);
     _buffer.clear();
     _bufferedDuration = Duration.zero;
     _silenceDuration = Duration.zero;
+    _trailingSilenceBytes = 0;
     return tooShort ? null : bytes;
   }
 

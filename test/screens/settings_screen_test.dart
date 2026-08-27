@@ -111,19 +111,15 @@ void main() {
     },
   );
 
-  testWidgets('tapping "Personalize Recognition" invokes onOpenVoiceSetup', (
-    tester,
-  ) async {
-    var tapped = false;
-    await tester.pumpWidget(
-      wrap(buildScreen(onOpenVoiceSetup: () => tapped = true)),
-    );
+  testWidgets(
+    '"Personalize Recognition" is hidden -- production Speech Recognition '
+    '(package:speech_to_text) needs no per-learner enrollment',
+    (tester) async {
+      await tester.pumpWidget(wrap(buildScreen()));
 
-    await tester.tap(find.text('Personalize Recognition'));
-    await tester.pump();
-
-    expect(tapped, isTrue);
-  });
+      expect(find.text('Personalize Recognition'), findsNothing);
+    },
+  );
 
   testWidgets('renders the Period/Dot and Slash/Stroke choices at the given '
       'initial values', (tester) async {

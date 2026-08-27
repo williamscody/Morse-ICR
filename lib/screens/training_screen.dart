@@ -13,6 +13,7 @@ import '../speech/answer_speaker.dart';
 import '../speech/enrollment_store.dart';
 import '../speech/file_enrollment_store.dart';
 import '../speech/response_listener.dart';
+import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
 import '../speech/voice_response_listener.dart';
 import '../training/app_settings.dart';
@@ -30,10 +31,15 @@ import '../training/training_log_store.dart';
 import '../training/training_session_record.dart';
 import 'countdown_timer_settings.dart';
 import 'enrollment_screen.dart';
+import 'help_screen.dart';
 import 'problem_character_keyboard.dart';
 import 'settings_screen.dart';
 import 'training_log_screen.dart';
 import 'widgets/stepped_int_control.dart';
+
+// See lib/debug_log.dart's own note -- kept as a flip-able flag, not
+// deleted, for the next hard-to-diagnose on-device bug.
+const bool _showDebugLogPanel = false;
 
 /// The training screen wired to the character-generation loop,
 /// recognition timer, computer-voice answer, and the learner's own
@@ -145,6 +151,28 @@ class _TrainingScreenState extends State<TrainingScreen>
   // of the training log (Milestone 10, morse_icr_spec.md section 21)
   // itself -- Bill's own field list for that omitted it.
   int _charactersPlayed = 0;
+  // Per-character hit/miss tallies for this session, cleared at Start --
+  // the raw material [_persistMissedCharacters] uses at Stop to decide
+  // what to auto-populate into Problem Characters (morse_icr_spec.md
+  // section 39). Deliberately *not* a single "ever missed" set: a normal
+  // session cycles the active characters multiple times, and on-device
+  // testing (2026-08-23, 28WPM/500ms) found that flagging on any single
+  // miss -- even one immediately followed by a correct answer next time
+  // around -- flagged nearly the entire trained set, since almost every
+  // character gets missed at least once somewhere in a longer session.
+  // Tallying hits and misses instead lets [_persistMissedCharacters] flag
+  // only characters actually missed *more often than not*, which is what
+  // "problem character" is meant to mean.
+  final Map<String, int> _sessionHits = {};
+  final Map<String, int> _sessionMisses = {};
+  // Whether Speech Recognition was actually on for this session, frozen
+  // at Start the same way wpm/recognitionTime/extraGap are below -- gates
+  // whether [_sessionHits]/[_sessionMisses] are populated at all. Without
+  // this, a session run with recognition off would have
+  // TrainingEngine.onMissedResponse fire for literally every character
+  // (nothing can ever be credited correct with no listener running),
+  // flooding the problem-character list with the entire active set.
+  bool _recognitionActiveThisSession = false;
   // Set the moment Start actually begins the training loop, read back
   // when the session ends (whether by Stop or the countdown timer
   // reaching zero) to compute the elapsed time recorded in the training
@@ -193,25 +221,54 @@ class _TrainingScreenState extends State<TrainingScreen>
     _problemCharacterStore =
         widget._injectedProblemCharacterStore ?? FileProblemCharacterStore();
     _enrollmentStore = widget._injectedEnrollmentStore ?? FileEnrollmentStore();
-    // Milestone 13 step 5 (morse_icr_spec.md section 38): the
-    // enrollment-trained recognizer is the only production
-    // ResponseListener -- no engine-selection toggle, per Bill's
-    // standing decision (SpeechToTextResponseListener stays in the
-    // codebase for comparison/testing, but is no longer wired in here).
+    // Milestone 13's enrollment-trained (MFCC/DTW) recognizer was the
+    // production ResponseListener from step 5 (2026-08-23) until
+    // 2026-08-26, when on-device testing via EnrollmentScreen's Test
+    // mode found persistent confusion on classically hard-to-distinguish
+    // letter names (M/N, T/K, A pulling in L/O/I/E) that careful
+    // re-enrollment didn't meaningfully improve -- read as a ceiling on
+    // few-shot DTW-over-MFCC against a handful of personal recordings,
+    // not a tunable bug. Reverted to the general-purpose
+    // package:speech_to_text engine this originally replaced: a full
+    // acoustic+language model trained on vastly more data should handle
+    // these classic confusions better than nearest-neighbor distance
+    // over ~3 samples. The original reason *that* engine was replaced --
+    // 700ms-1.5s recognition latency corrupting the "beat the computer"
+    // timing judgment -- no longer applies now that TrainingEngine judges
+    // timing at speech *onset* (Milestone 13, 2026-08-22) rather than
+    // whenever a match finishes resolving, so latency no longer eats
+    // into the recognitionTime budget the way it used to. Still no
+    // engine-selection toggle, per Bill's standing decision -- one
+    // canonical production listener. The MFCC/DTW engine and
+    // EnrollmentScreen are left in place, just unused here, in case this
+    // doesn't pan out either.
     _responseListener =
-        widget._injectedResponseListener ??
-        VoiceResponseListener(enrollmentStore: _enrollmentStore);
-    // Lets VoiceResponseListener snapshot "beat the computer" timing the
-    // instant it detects the learner starting to respond, rather than
-    // only being able to judge timing once recognition fully resolves
-    // what they said (Milestone 13, 2026-08-22 -- see
-    // TrainingEngine.submitResponse's `at` parameter). A one-time wire-up
-    // since both objects live for the whole widget lifetime, unlike
-    // updateActiveCharacters below which changes per session.
+        widget._injectedResponseListener ?? SpeechToTextResponseListener();
+    // Lets any onset-capable listener (VoiceResponseListener,
+    // SpeechToTextResponseListener) snapshot "beat the computer" timing
+    // the instant it detects the learner starting to respond, rather
+    // than only being able to judge timing once recognition fully
+    // resolves what they said (Milestone 13, 2026-08-22 -- see
+    // TrainingEngine.submitResponse's `at` parameter). A one-time
+    // wire-up since both objects live for the whole widget lifetime,
+    // unlike updateActiveCharacters below which changes per session.
     final responseListener = _responseListener;
-    if (responseListener is VoiceResponseListener) {
-      responseListener.captureResponseWindow =
+    // Dart doesn't promote a local through an `is` check into an
+    // unrelated interface/mixin type (only into a subtype of its own
+    // declared type) -- an explicit cast is needed even though the
+    // check above already guarantees it's safe.
+    if (responseListener is OnsetDetectingResponseListener) {
+      (responseListener as OnsetDetectingResponseListener)
+              .captureResponseWindow =
           _trainingEngine.captureResponseWindow;
+      // Lets the listener re-arm onset detection right when a turn's
+      // window opens rather than only on acoustic silence -- see
+      // TrainingEngine.onResponseWindowOpened's own doc comment
+      // (2026-08-28) for why waiting for silence isn't reliable enough
+      // between back-to-back rapid answers.
+      _trainingEngine.onResponseWindowOpened = (character) {
+        (responseListener as OnsetDetectingResponseListener).armForNewTurn();
+      };
     }
     // Reflects a previously-saved problem-character set as the active
     // training set right from cold launch, not just for the rest of the
@@ -242,7 +299,23 @@ class _TrainingScreenState extends State<TrainingScreen>
     // [TtsAnswerSpeaker]'s own voice-quality selection already takes.
     _appSettingsStore.load().then((settings) {
       if (!mounted) return;
-      setState(() => _appSettings = settings);
+      setState(() {
+        _appSettings = settings;
+        _wpm = settings.characterSpeedWpm;
+        _recognitionTimeMs = settings.recognitionTimeMs;
+        _extraGapMs = settings.extraGapMs;
+        _voiceEnabled = settings.voiceEnabled;
+        _recognitionEnabled = settings.recognitionEnabled;
+        final restored = {
+          for (final name in settings.selectedCharacterSetNames)
+            CharacterSetType.values.asNameMap()[name],
+        }..removeWhere((type) => type == null);
+        if (restored.isNotEmpty) {
+          _selectedCharacterSets
+            ..clear()
+            ..addAll(restored.cast<CharacterSetType>());
+        }
+      });
       _applyAppSettings(settings);
     });
     final answerSpeaker = _answerSpeaker;
@@ -276,15 +349,15 @@ class _TrainingScreenState extends State<TrainingScreen>
     // recognition-time changes already follow. Scoring the response is
     // out of scope until Milestone 14.
     //
-    // No muting around this: [SpeechToTextResponseListener] keeps the
-    // mic listening continuously through the computer's own
-    // announcement, and on-device testing showed the phone reliably
-    // re-hearing its own TTS voice and crediting it as the learner's
-    // response -- but a software mute here can't distinguish that echo
-    // from a genuine late response, since both land in the exact same
-    // post-announcement window (ASR results lag the speech that produced
-    // them by 700ms-1.5s, well past this recognition deadline). Fixed at
-    // the acoustic level instead, by requiring headphones whenever
+    // No muting around this: the mic listens continuously through the
+    // computer's own announcement, and on-device testing (with the
+    // general-purpose speech_to_text engine this app used before
+    // Milestone 13's enrollment-trained recognizer) showed the phone
+    // reliably re-hearing its own TTS voice and crediting it as the
+    // learner's response -- but a software mute here can't distinguish
+    // that echo from a genuine late response, since both land in the
+    // exact same post-announcement window. Fixed at the acoustic level
+    // instead, by requiring headphones whenever
     // recognition is on (see [_toggleTraining]/[_onRecognitionChanged]),
     // so the mic has nothing of the computer's own voice to hear.
     _trainingEngine.isVoiceEnabled = () => _voiceEnabled;
@@ -301,6 +374,19 @@ class _TrainingScreenState extends State<TrainingScreen>
     // character itself is never shown (section 24).
     _trainingEngine.onCorrectResponse = (character) {
       if (mounted) setState(() => _lastResponseCorrect = true);
+      if (_recognitionActiveThisSession) {
+        _sessionHits[character] = (_sessionHits[character] ?? 0) + 1;
+      }
+    };
+    // Feeds this session's per-character hit/miss tally, which
+    // [_persistMissedCharacters] uses at Stop to auto-populate Problem
+    // Characters (morse_icr_spec.md section 39) -- see
+    // [_recognitionActiveThisSession] for why this is gated rather than
+    // unconditional.
+    _trainingEngine.onMissedResponse = (character) {
+      if (_recognitionActiveThisSession) {
+        _sessionMisses[character] = (_sessionMisses[character] ?? 0) + 1;
+      }
     };
   }
 
@@ -337,10 +423,12 @@ class _TrainingScreenState extends State<TrainingScreen>
 
   // iOS can silently leave the shared AVAudioSession deactivated or on
   // the wrong category after the app is backgrounded and resumed
-  // without being killed -- most plausibly via
-  // [SpeechToTextResponseListener]'s own category churn being
-  // mid-flight when backgrounded (morse_icr_spec.md section 27).
-  // Re-applying the session's configuration and (if a session is
+  // without being killed -- originally traced to the general-purpose
+  // speech_to_text engine's own category churn being mid-flight when
+  // backgrounded (morse_icr_spec.md section 27; that engine was later
+  // replaced by Milestone 13's enrollment-trained recognizer, but this
+  // reactivation safeguard hasn't been re-verified as unnecessary, so it
+  // stays). Re-applying the session's configuration and (if a session is
   // running) reactivating it here means that no longer depends on the
   // process having been fully killed and relaunched to pick up a fresh
   // session.
@@ -459,6 +547,8 @@ class _TrainingScreenState extends State<TrainingScreen>
       }
       trainingAudioHandler?.reportIdle();
       await _recordCompletedSession(recordedDuration);
+      await _persistMissedCharacters();
+      await _persistCharacterScores();
       _cancelCountdownTicker();
       _cancelElapsedTicker();
       setState(() {
@@ -490,6 +580,9 @@ class _TrainingScreenState extends State<TrainingScreen>
     _sessionStartWpm = _wpm;
     _sessionStartRecognitionTimeMs = _recognitionTimeMs;
     _sessionStartExtraGapMs = _extraGapMs;
+    _recognitionActiveThisSession = _recognitionEnabled;
+    _sessionHits.clear();
+    _sessionMisses.clear();
     setState(() {
       _isTraining = true;
       _charactersPlayed = 0;
@@ -602,6 +695,90 @@ class _TrainingScreenState extends State<TrainingScreen>
       await _trainingLogStore.save([...existing, record]);
     } catch (e) {
       logDebug('stop: training log save failed: $e');
+    }
+  }
+
+  // Flags this session's *majority-missed* characters for review
+  // (morse_icr_spec.md section 39) -- additive, never clearing an
+  // already-flagged character just because this particular session
+  // didn't happen to miss it. A character only counts as missed here if
+  // [_sessionMisses] outweighs [_sessionHits] for it -- missed strictly
+  // more often than it was answered correctly -- not on any single miss,
+  // so a character gotten wrong once but right the next time it comes up
+  // in the same session doesn't get flagged (see [_sessionHits]'s doc
+  // comment for why).
+  //
+  // Deliberately does *not* merge these into the persisted Focus
+  // character list itself -- only [saveAutoFlagged]. An earlier version
+  // did merge them in, which silently expanded the active training set
+  // (and [ProblemCharacterKeyboard]'s own "Focus (n active)" count) with
+  // characters the learner never actually chose; worse, since
+  // [ProblemCharacterKeyboard] deliberately doesn't border an
+  // unreviewed auto-flagged chip (that border is reserved for a
+  // character the learner picked), those silently-added characters
+  // looked completely unselected there despite genuinely being active --
+  // on-device testing (2026-08-26) found this needed two taps to
+  // actually select such a character (the first tap *deselected* the
+  // invisible pre-existing selection, the second one reselected it) and
+  // left "Focus (10 active)" on this screen with no visible relationship
+  // to what was actually bordered on that one. Flagging without merging
+  // means auto-detected characters surface as a suggestion (and, once
+  // scored, via [ProblemCharacterKeyboard]'s heat-map color) without
+  // silently joining what actually trains next -- only a character the
+  // learner has actually tapped there does that now.
+  Future<void> _persistMissedCharacters() async {
+    final flagged = {
+      for (final entry in _sessionMisses.entries)
+        if (entry.value > (_sessionHits[entry.key] ?? 0)) entry.key,
+    };
+    if (flagged.isEmpty) return;
+    try {
+      final existing = await _problemCharacterStore.loadAutoFlagged();
+      await _problemCharacterStore.saveAutoFlagged({...existing, ...flagged});
+    } catch (e) {
+      logDebug('stop: problem-character auto-flag failed: $e');
+    }
+  }
+
+  // Folds this session's per-character correct-answer tally
+  // ([_sessionHits]) into the persisted, all-time win score that drives
+  // [ProblemCharacterKeyboard]'s heat-map chip coloring. Additive across
+  // sessions, unlike [_sessionHits] itself which resets at every Start --
+  // a no-op when recognition wasn't active this session, since
+  // [_sessionHits]/[_sessionMisses] are only ever populated while
+  // [_recognitionActiveThisSession] is true.
+  //
+  // Every character *attempted* this session -- [_sessionHits] union
+  // [_sessionMisses], not just [_sessionHits] -- gets an entry in the
+  // saved map, defaulting to 0 if it's never been credited a hit at all.
+  // [ProblemCharacterKeyboard] treats "has an entry" (even a 0) as "was
+  // actually trained" and "no entry" as "never trained" -- on-device
+  // testing (2026-08-25) found that keying presence off [_sessionHits]
+  // alone left every character the learner always got wrong (a real,
+  // meaningful all-red result) looking identical to one that was never
+  // part of any session at all (correctly transparent), since both read
+  // as score 0 with no way to tell them apart.
+  Future<void> _persistCharacterScores() async {
+    final attempted = {..._sessionHits.keys, ..._sessionMisses.keys};
+    if (attempted.isEmpty) return;
+    try {
+      final scores = {...await _problemCharacterStore.loadScores()};
+      // Cumulative attempt count (hits + misses) alongside the existing
+      // cumulative hit count -- together they let
+      // [ProblemCharacterKeyboard] compute an all-time "X% Correct"
+      // summary (morse_icr_spec.md's Focus Characters screen, 2026-08-31)
+      // without which only the numerator (hits) would ever be known.
+      final attempts = {...await _problemCharacterStore.loadAttempts()};
+      for (final character in attempted) {
+        final hits = _sessionHits[character] ?? 0;
+        final misses = _sessionMisses[character] ?? 0;
+        scores[character] = (scores[character] ?? 0) + hits;
+        attempts[character] = (attempts[character] ?? 0) + hits + misses;
+      }
+      await _problemCharacterStore.saveScores(scores);
+      await _problemCharacterStore.saveAttempts(attempts);
+    } catch (e) {
+      logDebug('stop: character-score persist failed: $e');
     }
   }
 
@@ -736,6 +913,7 @@ class _TrainingScreenState extends State<TrainingScreen>
       return;
     }
     setState(() => _recognitionEnabled = value);
+    _persistMainScreenSettings();
     if (!_isTraining) return;
     if (value) {
       unawaited(
@@ -780,6 +958,32 @@ class _TrainingScreenState extends State<TrainingScreen>
     unawaited(_appSettingsStore.save(settings));
   }
 
+  // Persists whichever of this screen's own live-adjustable controls
+  // (Character Speed, Recognition Time, Extra Gap, Character Set, Voice,
+  // Speech Recognition) aren't already routed through [_updateAppSettings]
+  // -- called after every `setState` that touches one of those fields, so
+  // a force quit never silently reverts the main screen to its hardcoded
+  // defaults (Bill, 2026-08-30).
+  void _persistMainScreenSettings() {
+    _appSettings = _appSettings.copyWith(
+      characterSpeedWpm: _wpm,
+      recognitionTimeMs: _recognitionTimeMs,
+      extraGapMs: _extraGapMs,
+      selectedCharacterSetNames: [
+        for (final type in _selectedCharacterSets) type.name,
+      ],
+      voiceEnabled: _voiceEnabled,
+      recognitionEnabled: _recognitionEnabled,
+    );
+    unawaited(_appSettingsStore.save(_appSettings));
+  }
+
+  void _openHelp() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const HelpScreen()));
+  }
+
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -793,7 +997,10 @@ class _TrainingScreenState extends State<TrainingScreen>
           morseVolumePercent: _appSettings.morseVolumePercent,
           voiceVolumePercent: _appSettings.voiceVolumePercent,
           randomCharacterOrder: _appSettings.randomCharacterOrder,
-          onVoiceChanged: (value) => setState(() => _voiceEnabled = value),
+          onVoiceChanged: (value) {
+            setState(() => _voiceEnabled = value);
+            _persistMainScreenSettings();
+          },
           onRecognitionChanged: _onRecognitionChanged,
           onOpenVoiceSetup: _openEnrollmentScreen,
           onSpeakPeriodAsDotChanged: (value) => _updateAppSettings(
@@ -831,6 +1038,11 @@ class _TrainingScreenState extends State<TrainingScreen>
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Help',
+            onPressed: _openHelp,
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _openSettings,
           ),
@@ -859,6 +1071,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                           onChanged: (v) {
                             setState(() => _wpm = v);
                             _trainingEngine.updateSettings(wpm: v.toDouble());
+                            _persistMainScreenSettings();
                           },
                         ),
                         const SizedBox(height: 24),
@@ -874,6 +1087,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                             _trainingEngine.updateSettings(
                               recognitionTime: Duration(milliseconds: v),
                             );
+                            _persistMainScreenSettings();
                           },
                         ),
                         const SizedBox(height: 24),
@@ -889,6 +1103,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                             _trainingEngine.updateSettings(
                               extraGap: Duration(milliseconds: v),
                             );
+                            _persistMainScreenSettings();
                           },
                         ),
                       ],
@@ -973,6 +1188,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                                           // section 39).
                                           _problemCharacters = null;
                                         });
+                                        _persistMainScreenSettings();
                                       },
                               ),
                           ],
@@ -1082,8 +1298,15 @@ class _TrainingScreenState extends State<TrainingScreen>
                         : null,
                     child: Text(_isTraining ? 'Stop' : 'Start'),
                   ),
-                  const SizedBox(height: 16),
-                  _DebugLogPanel(),
+                  // 2026-08-30: hidden now that Milestone 13's on-device
+                  // debugging is done -- see lib/debug_log.dart's own
+                  // note. Flip _showDebugLogPanel back on (logging itself
+                  // also needs re-enabling there) if a future hard-to-
+                  // diagnose bug needs it again.
+                  if (_showDebugLogPanel) ...[
+                    const SizedBox(height: 16),
+                    _DebugLogPanel(),
+                  ],
                 ],
               ),
             ),

@@ -69,10 +69,10 @@ class _FakeSpeaker extends AnswerSpeaker {
 }
 
 /// A no-op listener so Start/Stop tests never touch the real
-/// `VoiceResponseListener` (or `SpeechToTextResponseListener`) platform
-/// plugins, which -- like [_FakeTurnPlayer]'s real counterpart -- have no
-/// channel mock registered under `flutter test` and hang indefinitely if
-/// invoked. Also records the callback so tests can simulate a recognized
+/// `VoiceResponseListener` platform plugins, which -- like
+/// [_FakeTurnPlayer]'s real counterpart -- have no channel mock
+/// registered under `flutter test` and hang indefinitely if invoked.
+/// Also records the callback so tests can simulate a recognized
 /// response.
 class _FakeResponseListener implements ResponseListener {
   final List<String> startListeningCalls = [];
@@ -102,6 +102,9 @@ class _FakeResponseListener implements ResponseListener {
 /// [FileProblemCharacterStore]'s platform-backed `path_provider` calls.
 class _FakeProblemCharacterStore implements ProblemCharacterStore {
   List<String>? saved;
+  Set<String> savedAutoFlagged = const {};
+  Map<String, int> savedScores = const {};
+  Map<String, int> savedAttempts = const {};
 
   @override
   Future<List<String>?> load() async => saved;
@@ -109,6 +112,30 @@ class _FakeProblemCharacterStore implements ProblemCharacterStore {
   @override
   Future<void> save(List<String> characters) async {
     saved = characters;
+  }
+
+  @override
+  Future<Set<String>> loadAutoFlagged() async => savedAutoFlagged;
+
+  @override
+  Future<void> saveAutoFlagged(Set<String> characters) async {
+    savedAutoFlagged = characters;
+  }
+
+  @override
+  Future<Map<String, int>> loadScores() async => savedScores;
+
+  @override
+  Future<void> saveScores(Map<String, int> scores) async {
+    savedScores = scores;
+  }
+
+  @override
+  Future<Map<String, int>> loadAttempts() async => savedAttempts;
+
+  @override
+  Future<void> saveAttempts(Map<String, int> attempts) async {
+    savedAttempts = attempts;
   }
 }
 
@@ -627,6 +654,204 @@ void main() {
     await tester.tap(find.text('Stop'));
     await tester.pump();
   });
+
+  testWidgets(
+    'a session with recognition on and at least one miss auto-flags the '
+    'missed characters for review, without adding them to the active '
+    'Focus selection itself',
+    (tester) async {
+      final store = _FakeProblemCharacterStore()..saved = ['K'];
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+
+      // Default character speed (90 WPM) plus default recognition time
+      // (500 ms) comfortably closes the first character's window with
+      // no response ever submitted for it -- a guaranteed miss.
+      await tester.pump(const Duration(milliseconds: 900));
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      // The persisted Focus selection itself is untouched -- still
+      // exactly what it was before this session (2026-08-26: an earlier
+      // version merged missed characters in here too, which silently
+      // grew the active training set -- and ProblemCharacterKeyboard's
+      // own "Focus (n active)" count -- with characters the learner
+      // never chose).
+      expect(store.saved, ['K']);
+      expect(store.savedAutoFlagged, isNotEmpty);
+    },
+  );
+
+  testWidgets(
+    'auto-flagging a newly-missed character preserves an already-flagged '
+    'one from an earlier session, rather than replacing the whole set',
+    (tester) async {
+      final store = _FakeProblemCharacterStore()
+        ..saved = ['K']
+        ..savedAutoFlagged = {'Z'};
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      // 'Z' was flagged before this session even started (never
+      // reviewed) -- it must still be flagged afterward, alongside
+      // whatever this session's own guaranteed miss added.
+      expect(store.savedAutoFlagged, contains('Z'));
+    },
+  );
+
+  testWidgets(
+    'a character missed once but answered correctly on a later attempt in '
+    'the same session is not flagged (majority-miss, not any-miss)',
+    (tester) async {
+      final listener = _FakeResponseListener();
+      final engine = TrainingEngine(turnPlayer: _FakeTurnPlayer());
+      final store = _FakeProblemCharacterStore()..saved = ['K'];
+      await tester.pumpWidget(
+        wrap(
+          TrainingScreen(
+            trainingEngine: engine,
+            answerSpeaker: _FakeSpeaker(),
+            responseListener: listener,
+            problemCharacterStore: store,
+            trainingLogStore: _FakeTrainingLogStore(),
+            headphonesConnectedCheck: () async => true,
+            reconfigureAudioSessionOnStart: () async {},
+            activateAudioSessionOnStart: () async {},
+            deactivateAudioSessionOnStop: () async {},
+          ),
+        ),
+      );
+      // The store's single saved character ('K') comes up auto-active as
+      // the Focus set from cold launch, so every turn this session
+      // generates is guaranteed to be 'K' -- letting this test control
+      // exactly which attempt gets a response.
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+
+      // First 'K': its window closes with no response at all -- a
+      // guaranteed miss, same margin as the "at least one miss" test
+      // above. This comfortably carries the session into the second
+      // 'K' turn's own still-open response window too (its total
+      // duration is dominated by the same 500ms recognition time).
+      await tester.pump(const Duration(milliseconds: 900));
+
+      // Second 'K': respond correctly while its window is still open.
+      listener.onRecognized?.call('K');
+      await tester.pump(const Duration(milliseconds: 10));
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      // One miss, one hit for 'K' -- not missed *more often than not* --
+      // so it must not be auto-flagged, and the store (already holding
+      // exactly 'K') must be left completely untouched.
+      expect(store.saved, ['K']);
+      expect(store.savedAutoFlagged, isEmpty);
+      // The one hit still counts toward 'K''s all-time win score,
+      // independent of the majority-miss auto-flagging logic above.
+      expect(store.savedScores, {'K': 1});
+    },
+  );
+
+  testWidgets(
+    'a character that is always missed, never once answered correctly, '
+    'still gets a 0 score entry -- not left with no entry at all, which '
+    'would be indistinguishable from a character that was never trained',
+    (tester) async {
+      final listener = _FakeResponseListener();
+      final engine = TrainingEngine(turnPlayer: _FakeTurnPlayer());
+      final store = _FakeProblemCharacterStore()..saved = ['K'];
+      await tester.pumpWidget(
+        wrap(
+          TrainingScreen(
+            trainingEngine: engine,
+            answerSpeaker: _FakeSpeaker(),
+            responseListener: listener,
+            problemCharacterStore: store,
+            trainingLogStore: _FakeTrainingLogStore(),
+            headphonesConnectedCheck: () async => true,
+            reconfigureAudioSessionOnStart: () async {},
+            activateAudioSessionOnStart: () async {},
+            deactivateAudioSessionOnStop: () async {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+
+      // 'K' (the only active character) never gets a response at all --
+      // a guaranteed miss, same margin used elsewhere in this file.
+      await tester.pump(const Duration(milliseconds: 900));
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      expect(store.savedScores, {'K': 0});
+    },
+  );
+
+  testWidgets(
+    'a session with recognition off never touches the problem-character '
+    'store, even though every character goes unanswered',
+    (tester) async {
+      final store = _FakeProblemCharacterStore();
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+
+      await tester.tap(find.byIcon(Icons.settings));
+      await tester.pump();
+      final settingsFinder = _pushedSettingsScreen();
+      tester.widget<SettingsScreen>(settingsFinder).onRecognitionChanged(false);
+      Navigator.of(tester.element(settingsFinder)).pop();
+      await tester.pump();
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      expect(store.saved, isNull);
+      expect(store.savedAutoFlagged, isEmpty);
+      expect(store.savedScores, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'a session stopped before any response window closes never writes to '
+    'the problem-character store',
+    (tester) async {
+      final store = _FakeProblemCharacterStore();
+      await tester.pumpWidget(wrapTraining(problemCharacterStore: store));
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+
+      expect(store.saved, isNull);
+      expect(store.savedAutoFlagged, isEmpty);
+      expect(store.savedScores, isEmpty);
+    },
+  );
 
   testWidgets('Start is disabled when no character set is selected', (
     tester,

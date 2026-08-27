@@ -7,9 +7,11 @@ import 'package:audio_session/audio_session.dart';
 ///
 /// Called once at cold start, and again whenever the app returns to the
 /// foreground -- iOS can silently leave the session deactivated or on
-/// the wrong category after backgrounding (most plausibly via
-/// [SpeechToTextResponseListener]'s own category churn still being
-/// mid-flight when backgrounded, per morse_icr_spec.md section 27).
+/// the wrong category after backgrounding (originally traced to the
+/// general-purpose speech_to_text engine's own category churn still
+/// being mid-flight when backgrounded, per morse_icr_spec.md section 27;
+/// that engine was later replaced, but this reconfiguration hasn't been
+/// re-verified as unnecessary, so it stays).
 /// A cold start after force-quitting always reconfigures from scratch
 /// and masks the problem; an ordinary Home-button background/resume --
 /// which keeps the process alive since UIBackgroundModes includes
@@ -39,13 +41,13 @@ Future<void> deactivateAudioSession() async {
 /// own built-in speaker/earpiece -- wired headphones/headset, Bluetooth,
 /// or a USB/dock audio accessory.
 ///
-/// Speech recognition requires this (morse_icr_spec.md section 27):
-/// [SpeechToTextResponseListener] keeps the mic listening continuously
-/// through the computer's own spoken announcement, and on-device testing
-/// confirmed that with the built-in speaker, the phone reliably re-hears
-/// its own TTS voice through open air and credits it as the learner's
-/// spoken response -- indistinguishable from a genuine response by
-/// timing alone, since both arrive within the same ASR-lag window.
+/// Speech recognition requires this (morse_icr_spec.md section 27): the
+/// active listener keeps the mic listening continuously through the
+/// computer's own spoken announcement, and on-device testing confirmed
+/// that with the built-in speaker, the phone reliably re-hears its own
+/// TTS voice through open air and credits it as the learner's spoken
+/// response -- indistinguishable from a genuine response by timing
+/// alone, since both arrive within the same post-announcement window.
 /// Headphones route audio into the ear instead of the room, removing
 /// that acoustic path entirely regardless of wired/Bluetooth latency.
 Future<bool> hasNonSpeakerAudioOutput() async {

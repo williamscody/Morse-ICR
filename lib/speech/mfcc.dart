@@ -34,10 +34,13 @@ typedef MfccSequence = List<List<double>>;
 /// consonant pairs (B/V, K/Q, L/R) -- ones that mostly differ in how a
 /// sound *transitions*, not its static per-frame shape, which is
 /// exactly what a static-only feature vector misses. Still simple --
-/// no delta-delta, no pre-emphasis tuning -- since section 38 flags
-/// matching as needing on-device investigation rather than a finished
-/// design. [sampleRate] defaults to 16000Hz to match the capture rate
-/// established in Milestone 13 step 1's on-device mic spike.
+/// no delta-delta -- since section 38 flags matching as needing
+/// on-device investigation rather than a finished design. [sampleRate]
+/// defaults to 16000Hz to match the capture rate established in
+/// Milestone 13 step 1's on-device mic spike.
+///
+/// Pre-emphasized ([_preEmphasize], Milestone 13, 2026-08-23) before
+/// framing -- the standard MFCC first stage, absent until now.
 ///
 /// [_coefficientCount] was tried at 20 (Milestone 13, 2026-08-22) to
 /// capture finer spectral detail for confusable pairs (M/N, I/Y, P/Q)
@@ -52,7 +55,7 @@ typedef MfccSequence = List<List<double>>;
 /// (Milestone 13, 2026-08-22: `EnrollmentStore.saveRecordings`) is that
 /// fix, adding them first just added noise.
 MfccSequence extractMfcc(Uint8List pcm16, {int sampleRate = 16000}) {
-  final samples = _decodePcm16(pcm16);
+  final samples = _preEmphasize(_decodePcm16(pcm16));
   if (samples.length < _frameLength) return [];
 
   final filterbank = _melFilterbankFor(sampleRate);
@@ -129,6 +132,29 @@ double _delta(
 /// showed matches were confidently wrong as often as confidently right
 /// -- distance alone wasn't separating correct from incorrect matches,
 /// suggesting exactly this kind of systematic offset.
+///
+/// This is the pipeline's settled answer after a 2026-08-24 investigation
+/// tried three narrower alternatives, all of which regressed full-
+/// vocabulary accuracy: disabling CMN outright (fixed a real A/E/I/O
+/// confusion cluster this full-width version causes, but reopened a
+/// "B"-attractor regression matching the original pre-trimming A/B-
+/// attractor bug); raw-waveform RMS loudness normalization in its place
+/// (similar-or-larger attractor set, didn't help); and normalizing only
+/// c0/c1 -- the coefficients that approximate overall energy and
+/// spectral tilt -- while leaving c2+ untouched (worse still, and the
+/// specific characters that failed shifted between attempts rather than
+/// shrinking). That pattern -- regression persists and moves around
+/// regardless of which coefficient subset is protected -- indicates
+/// full CMN is correcting broader per-clip nuisance variation across all
+/// 13 coefficients together (session/environment/vocal drift), not a
+/// cleanly separable gain-or-tilt-only bias. See morse_icr project
+/// memory (`project_problem_character_autopopulate`) for the full data;
+/// the A/E/I/O cluster this causes is the accepted, smaller-scope
+/// tradeoff. Don't re-attempt a narrower CMN variant without re-reading
+/// that history first -- RASTA-style per-coefficient temporal filtering
+/// (high-pass each coefficient's trajectory over time, rather than any
+/// form of mean subtraction) is the one remaining untried alternative,
+/// and a much bigger lift than anything tried so far.
 List<List<double>> _cepstralMeanNormalize(List<List<double>> frames) {
   if (frames.isEmpty) return frames;
   final coefficientCount = frames.first.length;
@@ -145,6 +171,26 @@ List<List<double>> _cepstralMeanNormalize(List<List<double>> frames) {
     for (final frame in frames)
       [for (var i = 0; i < coefficientCount; i++) frame[i] - means[i]],
   ];
+}
+
+// Standard first-stage MFCC pre-emphasis coefficient. Boosts high
+// frequencies ~6dB/octave to counter the glottal source's natural
+// downward spectral tilt, which otherwise leaves high-frequency
+// fricative energy -- the 4-8kHz band that's the main acoustic
+// difference between e.g. "eff" and "ess" -- tiny relative to vowel
+// formant energy going into the mel filterbank. Its absence was
+// identified (Milestone 13, 2026-08-23) as a likely contributor to F/S
+// and K/T staying confusable even after CMN and weighted deltas.
+const double _preEmphasisCoefficient = 0.97;
+
+List<double> _preEmphasize(List<double> samples) {
+  if (samples.isEmpty) return samples;
+  final emphasized = List<double>.filled(samples.length, 0);
+  emphasized[0] = samples[0];
+  for (var i = 1; i < samples.length; i++) {
+    emphasized[i] = samples[i] - _preEmphasisCoefficient * samples[i - 1];
+  }
+  return emphasized;
 }
 
 List<double> _decodePcm16(Uint8List bytes) {

@@ -30,8 +30,8 @@ void main() {
       }
     });
 
-    test('a speech burst followed by enough silence emits the buffered '
-        'utterance', () {
+    test('a speech burst followed by enough silence emits an utterance '
+        'trimmed of the trailing (hangover) silence', () {
       // Three loud chunks (300ms of "speech") ...
       expect(endpointer.addChunk(_chunk(5000), _chunkDuration), isNull);
       expect(endpointer.addChunk(_chunk(5000), _chunkDuration), isNull);
@@ -43,9 +43,10 @@ void main() {
       final utterance = endpointer.addChunk(_chunk(0), _chunkDuration);
 
       expect(utterance, isNotNull);
-      // The 3 speech chunks plus the 3 trailing (hangover) chunks --
-      // the tail of a word is legitimately part of it, not discarded.
-      expect(utterance!.length, 6 * _chunk(0).length);
+      // The hangover exists to *detect* the endpoint -- once detected,
+      // that trailing silence isn't part of the word, so only the 3
+      // speech chunks are kept.
+      expect(utterance!.length, 3 * _chunk(0).length);
     });
 
     test('a blip shorter than minUtteranceDuration is discarded as '
@@ -98,7 +99,59 @@ void main() {
       final utterance = endpointer.addChunk(_chunk(0), _chunkDuration);
 
       expect(utterance, isNotNull);
-      expect(utterance!.length, 4 * _chunk(0).length);
+      // 1 speech chunk, trailing (hangover) silence trimmed off.
+      expect(utterance!.length, 1 * _chunk(0).length);
+    });
+
+    test('audio immediately before speech crosses the threshold is kept '
+        'as pre-roll', () {
+      final withPreRoll = UtteranceEndpointer(
+        speechThreshold: 1000,
+        hangoverDuration: const Duration(milliseconds: 300),
+        minUtteranceDuration: const Duration(milliseconds: 50),
+        maxUtteranceDuration: const Duration(milliseconds: 800),
+        preRollDuration: const Duration(milliseconds: 200),
+      );
+
+      // Two quiet chunks (200ms), entirely within preRollDuration ...
+      expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      // ... then a loud chunk crosses the threshold ...
+      expect(withPreRoll.addChunk(_chunk(5000), _chunkDuration), isNull);
+      // ... then enough silence to end it.
+      expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      final utterance = withPreRoll.addChunk(_chunk(0), _chunkDuration);
+
+      expect(utterance, isNotNull);
+      // The 2 pre-roll chunks plus the 1 speech chunk -- trailing
+      // silence trimmed off as in the tests above.
+      expect(utterance!.length, 3 * _chunk(0).length);
+    });
+
+    test('pre-roll only keeps audio within preRollDuration, discarding '
+        'anything further back', () {
+      final withPreRoll = UtteranceEndpointer(
+        speechThreshold: 1000,
+        hangoverDuration: const Duration(milliseconds: 300),
+        minUtteranceDuration: const Duration(milliseconds: 50),
+        maxUtteranceDuration: const Duration(milliseconds: 800),
+        preRollDuration: const Duration(milliseconds: 150),
+      );
+
+      // 5 quiet chunks (500ms) -- far more than preRollDuration (150ms).
+      for (var i = 0; i < 5; i++) {
+        expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      }
+      expect(withPreRoll.addChunk(_chunk(5000), _chunkDuration), isNull);
+      expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      expect(withPreRoll.addChunk(_chunk(0), _chunkDuration), isNull);
+      final utterance = withPreRoll.addChunk(_chunk(0), _chunkDuration);
+
+      expect(utterance, isNotNull);
+      // Only the most recent 100ms pre-roll chunk (closest whole chunk
+      // to the 150ms window) plus the 1 speech chunk survive.
+      expect(utterance!.length, 2 * _chunk(0).length);
     });
 
     test('onSpeechStarted fires exactly once, at the first speech chunk '

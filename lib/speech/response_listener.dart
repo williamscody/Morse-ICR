@@ -13,10 +13,9 @@ typedef ResponseWindowSnapshot = ({String? character, bool windowOpen});
 /// Reports a matched character, optionally alongside the
 /// [ResponseWindowSnapshot] captured when the response actually started
 /// (not necessarily when recognition of it finished). `at` is omitted by
-/// a listener with no separate onset moment to hook (e.g.
-/// `SpeechToTextResponseListener`, which only ever gets a finished
-/// result), in which case the receiver falls back to judging against
-/// live state at call time.
+/// a listener implementation with no separate onset moment to hook (only
+/// ever getting a finished result), in which case the receiver falls
+/// back to judging against live state at call time.
 typedef ResponseCallback =
     void Function(String character, {ResponseWindowSnapshot? at});
 
@@ -52,4 +51,28 @@ abstract class ResponseListener {
 
   /// Stops listening. No-op if not currently listening.
   Future<void> stopListening();
+}
+
+/// Mixed into a [ResponseListener] implementation that can detect speech
+/// onset separately from when recognition of it finishes, so it can
+/// supply [ResponseCallback]'s `at` parameter. [TrainingScreen] wires
+/// [captureResponseWindow] to `TrainingEngine.captureResponseWindow` via
+/// an `is OnsetDetectingResponseListener` check -- one shared hook point
+/// for every implementation that supports it, rather than a separate
+/// `is SomeSpecificListener` branch per implementation (2026-08-26: was
+/// about to become two before this was pulled out).
+mixin OnsetDetectingResponseListener {
+  ResponseWindowSnapshot Function()? captureResponseWindow;
+
+  /// Called (by the same `TrainingScreen` wiring as
+  /// [captureResponseWindow]) the instant a new turn's response window
+  /// opens -- lets an implementation re-arm onset detection at this
+  /// boundary rather than only ever on genuine acoustic silence, which
+  /// back-to-back rapid answers may not reliably provide between turns
+  /// (see `TrainingEngine.onResponseWindowOpened`'s own doc comment for
+  /// the on-device data behind this, 2026-08-28). Default no-op: only
+  /// [SpeechToTextResponseListener] currently needs this;
+  /// [VoiceResponseListener] arms onset per-turn through its own
+  /// `UtteranceEndpointer` mechanism already.
+  void armForNewTurn() {}
 }

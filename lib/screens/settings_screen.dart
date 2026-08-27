@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'widgets/stepped_int_control.dart';
 
+// 2026-08-31: "Personalize Recognition" opened voice enrollment for the
+// on-device, enrollment-trained (DTW/MFCC) recognizer -- irrelevant now
+// that production Speech Recognition is the general-purpose
+// package:speech_to_text engine (morse_icr project memory: Milestone
+// 13), which needs no per-learner enrollment. Hidden rather than
+// deleted, along with [onOpenVoiceSetup] going unused below, in case
+// the enrollment-based engine is revisited later.
+const bool _personalizeRecognitionEnabled = false;
+
 /// Settings previously inline on [TrainingScreen]'s main form, moved
 /// here to keep that screen focused on the training controls
 /// themselves. Local state mirrors every widget parameter so this
@@ -129,17 +138,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  // Opens voice enrollment (morse_icr_spec.md section
-                  // 38): recognition is matched against the learner's
-                  // own enrolled recordings, so this is where they're
-                  // made/redone. Placed directly under the Speech
-                  // Recognition toggle it configures, per Bill's
-                  // decision -- not a generic settings item.
-                  OutlinedButton(
-                    onPressed: widget.onOpenVoiceSetup,
-                    child: const Text('Personalize Recognition'),
-                  ),
+                  if (_personalizeRecognitionEnabled) ...[
+                    const SizedBox(height: 12),
+                    // Opens voice enrollment (morse_icr_spec.md section
+                    // 38): recognition is matched against the learner's
+                    // own enrolled recordings, so this is where they're
+                    // made/redone. Placed directly under the Speech
+                    // Recognition toggle it configures, per Bill's
+                    // decision -- not a generic settings item.
+                    OutlinedButton(
+                      onPressed: widget.onOpenVoiceSetup,
+                      child: const Text('Personalize Recognition'),
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   Text(
                     'Speak "." as',

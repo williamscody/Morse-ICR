@@ -959,13 +959,19 @@ On-device, enrollment-based speech recognition (section 38), as a candidate repl
 
 Beat-the-computer scoring. Sequenced after Milestone 13 since scoring ingests data from whichever speech-recognition engine is in use, and Milestone 13 is expected to be the one actually relied on.
 
+**Status: done, 2026-08-30 (Bill).** Delivered as part of the Focus/Problem Character work rather than a separate feature: every response is tallied win/loss per character (`TrainingScreen._sessionHits`/`_sessionMisses`), folded into an all-time per-character score (`ProblemCharacterStore`/`_persistCharacterScores`), and surfaced as the Focus keyboard's heat-map chip coloring (section 39, `ProblemCharacterKeyboard._heatMapColor`). No further work planned here.
+
 ### Milestone 15
 
 Character-level statistics. Sequenced after Milestone 13 for the same reason as Milestone 14.
 
+**Status: done, 2026-08-30 (Bill).** Same mechanism as Milestone 14 above -- the persisted per-character win score *is* the character-level statistic, and the Focus keyboard's heat map *is* its presentation. No separate statistics screen planned.
+
 ### Milestone 16 (experimental)
 
 Personal character-speed discovery.
+
+**Status: abandoned, 2026-08-30, at Bill's explicit direction.** Not pursued.
 
 Do not implement everything at once.
 
@@ -1078,9 +1084,13 @@ This matters because both iOS and Android ship a low-quality "compact"/basic voi
 
 Settings -> Accessibility -> Spoken Content -> Voices -> English -> choose a voice (e.g. Samantha, Ava) -> select an Enhanced or Premium quality option to download it. The application picks it up automatically the next time it launches; no in-app action is required.
 
+**Recommended: Samantha (Enhanced).** On-device testing (Milestone 13, 2026-08-23) found the default "compact" voice's rendering of "M" ("em") and "N" ("en") was audibly indistinguishable, even after trying several alternate spellings for "M" ("emmm", "em-uh", "ehm" -- none fixed it, since the compact voice's synthesis artifacts were the actual cause, not word choice). Switching to Samantha (Enhanced) resolved it immediately, with "M" back at its plain "em" spelling. Treat "the computer's speech sounds unclear/confusable" as a voice-quality question first, not a word-choice or code question.
+
 ### Android phone / tablet
 
 Settings -> Accessibility -> Text-to-speech output (exact path varies by manufacturer and Android version) -> select the active TTS engine (commonly Google Text-to-Speech) -> Install voice data, then choose a higher-quality voice for the desired language. The application picks it up automatically the next time it launches.
+
+No specific voice recommendation yet for Android -- untested as of 2026-08-23, to be revisited later.
 
 ## Relationship to the Settings screen (section 35)
 
@@ -1162,5 +1172,26 @@ Per section 12, additional common Morse punctuation may also be included; the ab
 3. The next training session the user starts trains only the entered problem-character set, in place of whatever character set was previously selected.
 
 This does not yet integrate with the three-session training cycle (section 8, Session B) -- that integration is future work, once the three-session cycle itself is built (Development Strategy, Milestone 9). Until then, entering a problem-character list and tapping Done simply makes it the active training set for the next Start, the same way selecting a character-set chip does today, and it remains active until the user selects a different character set or edits the problem-character list.
+
+---
+
+# 40. Speech Recognition: Accuracy and Getting the Best Results
+
+The current recognition engine is `package:speech_to_text` running fully on-device (section 27; the enrollment-based alternative in section 38 was built, tested, and set aside -- see that section's own notes). This section is user-facing guidance, not architecture: what actually helps recognition work well, and what limitations are inherent to this approach rather than bugs to report.
+
+## For best results
+
+- **Use headphones, not the phone's built-in speaker.** The computer's own spoken answer and the Morse tone play back at the same time the microphone is listening for the next response; on a speaker, that audio can bleed back into the mic. Headphones eliminate this and are the setup all of this feature's on-device tuning was done and verified with.
+- **A quiet room helps more than it might seem.** Recognition timing is judged from the moment your speech first crosses above the room's background noise level, not from when the words are fully transcribed. Background noise (fans, TV, other conversation) raises that floor and can both delay genuine onset detection and occasionally trigger a false one.
+- **Speak clearly and promptly, at a consistent distance from the mic.** A trailing "umm," breath, or extended pause mid-answer can occasionally be picked up as part of the response window's timing.
+- **Faster settings (short recognition time, high WPM) leave less margin for error.** At very tight recognition-time settings (e.g. 500ms), there's very little slack between when speech can physically be detected and when the window closes -- a response that's genuinely on time can still occasionally miss by a few tens of milliseconds. This is an inherent tradeoff of fast settings, not a defect.
+
+## Known accuracy limitations
+
+- **Some letters are inherently harder for any speech recognizer to tell apart**, because they sound alike when spoken as isolated letter names -- B/P, M/N, and similar pairs are classic examples (the same reason the NATO phonetic alphabet exists for radio communication). If a particular letter is consistently misrecognized, it's very unlikely to be fixable through settings; it's a limitation of matching short, isolated spoken letters this way.
+- **A spoken letter occasionally gets missed entirely** -- merged into a nearby word, or simply not picked up as its own response -- rather than recognized incorrectly. This happens more often for very short-sounding letters and is a limitation of the underlying recognizer's word-boundary detection, not something a setting can fully prevent.
+- **"Beat the computer" credit requires speech to be detected within the response window, not just spoken within it.** There is always some small delay between when you start speaking and when the app can detect that you started -- usually well under a tenth of a second, but nonzero. A response that felt on-time can occasionally be judged just late for this reason.
+
+None of the above should be read as "the feature doesn't work" -- these are the boundaries of what's achievable with on-device, real-time speech recognition on a phone, refined against extensive real-world testing (Milestone 13's several rounds of on-device tuning, 2026-08-26 through 2026-08-28). If recognition suddenly gets *dramatically* worse than this (e.g. it stops responding at all for an entire session), that likely is a bug worth reporting, not one of these inherent limits.
 
 # End of Specification

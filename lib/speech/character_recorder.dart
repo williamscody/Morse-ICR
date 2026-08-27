@@ -16,6 +16,12 @@ class MicPermissionDenied implements Exception {}
 /// late.
 class NoSpeechDetected implements Exception {}
 
+/// The sample rate every take from [recordCharacterTakes] is captured
+/// at -- exported so a consumer of [EnrollmentStore]'s raw PCM16 bytes
+/// (e.g. auditioning a saved take back) knows what to wrap them as
+/// without duplicating the number.
+const enrollmentSampleRate = 16000;
+
 /// Records [count] consecutive raw PCM16 takes of the learner speaking a
 /// single character (morse_icr_spec.md section 38's multi-take
 /// enrollment step), each trimmed to its own utterance via
@@ -61,7 +67,7 @@ Future<List<Uint8List>> recordCharacterTakes(
   StreamSubscription<Uint8List>? subscription;
   try {
     if (!await recorder.hasPermission()) throw MicPermissionDenied();
-    const sampleRate = 16000;
+    const sampleRate = enrollmentSampleRate;
     final stream = await recorder.startStream(
       RecordConfig(
         encoder: AudioEncoder.pcm16bits,

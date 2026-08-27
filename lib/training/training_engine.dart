@@ -24,12 +24,22 @@ import 'character_selector.dart';
 /// turn was rendered with, measured from when its play() call was
 /// acknowledged.
 class TrainingEngine {
-  TrainingEngine({required TurnPlayer turnPlayer, CharacterSelector? selector})
-    : _turnPlayer = turnPlayer,
-      _selector = selector ?? CharacterSelector();
+  TrainingEngine({
+    required TurnPlayer turnPlayer,
+    CharacterSelector? selector,
+    Duration pendingResponseTimeout = const Duration(seconds: 2),
+  }) : _turnPlayer = turnPlayer,
+       _selector = selector ?? CharacterSelector(),
+       _pendingResponseTimeout = pendingResponseTimeout;
 
   final TurnPlayer _turnPlayer;
   final CharacterSelector _selector;
+  // How long a closed-but-uncredited turn stays eligible for a late
+  // credit before [_finalizeMissed] gives up on it -- see
+  // [_pendingTurns]'s doc comment. Overridable (tests use a short value)
+  // so the timeout itself is directly testable without a real multi-
+  // second wait; production code relies on the default.
+  final Duration _pendingResponseTimeout;
 
   bool _running = false;
   Future<void>? _loopFuture;
@@ -40,8 +50,31 @@ class TrainingEngine {
   Duration _extraGap = Duration.zero;
 
   String? _awaitingResponseFor;
-  String? _respondedTo;
   bool _responseWindowOpen = false;
+  // The bookkeeping object for whatever [_awaitingResponseFor] currently
+  // is -- shared by reference with [_pendingTurns] once its window
+  // closes, so a late credit finds and marks the *same* object rather
+  // than only ever being able to affect "the current turn" or "the
+  // pending list" as two disconnected things (see [_pendingTurns]).
+  _OutstandingTurn? _currentTurn;
+  // Turns whose response window has already closed without being
+  // credited yet, each still eligible for a late credit -- routine here,
+  // not an edge case: recognition latency (endpointer hangover + DTW
+  // match) commonly runs several hundred ms to ~1s, comparable to or
+  // longer than a single turn's own cadence at fast WPM/short
+  // recognitionTime, so a genuinely on-time response's credit frequently
+  // doesn't land until *after* one or more later turns have already
+  // begun. An earlier design fired a turn's miss determination as soon
+  // as the *next* turn began, using a single shared "was the awaited
+  // character credited yet" field -- on-device data (2026-08-24,
+  // 24WPM/700ms) showed this fired a false miss for the outgoing turn
+  // moments before its own late-but-legitimate credit arrived (and the
+  // shared field then got overwritten by that late credit, corrupting
+  // whatever the *new* current turn's own bookkeeping needed it for
+  // next). Tracking each closed turn as its own object, kept eligible
+  // for a genuinely generous, fixed real-time window rather than
+  // "however long the next turn happens to take," fixes both.
+  final List<_OutstandingTurn> _pendingTurns = [];
   Timer? _windowOpenTimer;
   Timer? _windowCloseTimer;
 
@@ -59,6 +92,22 @@ class TrainingEngine {
   /// (logging, statistics) and for tests, and used by TrainingScreen to
   /// checkpoint the speech recognizer against fresh speech (section 27).
   void Function(String character)? onCharacterGenerated;
+
+  /// Called the instant [character]'s response window actually opens
+  /// (the same moment [_responseWindowOpen] flips true), not when it was
+  /// merely generated -- lets an onset-capable [ResponseListener] re-arm
+  /// onset detection at exactly this boundary. Added 2026-08-28: on-device
+  /// data showed a spoken letter's natural vocal decay routinely outlasts
+  /// a ~500ms response window, so the *previous* turn's trailing speech
+  /// was still active (by amplitude) when this turn's window opened,
+  /// preventing its own onset from ever registering (onset only fires
+  /// from a not-currently-speaking state) -- confirmed for 11 of 26
+  /// characters in one session, each swallowed by its immediate
+  /// predecessor's own tail. `SpeechToTextResponseListener` uses this to
+  /// force a fresh arming state per turn instead of waiting for genuine
+  /// acoustic silence between answers, which back-to-back rapid speech
+  /// may never actually provide.
+  void Function(String character)? onResponseWindowOpened;
 
   /// Called when a character's recognition deadline expires without an
   /// answer having been baked into its turn (i.e. [TurnPlayer] didn't
@@ -81,10 +130,57 @@ class TrainingEngine {
   /// [onRecognitionTimeout]'s live fallback) regardless, since speech-
   /// recognition accuracy is still being verified and Bill wants the
   /// voice kept on for debugging until a future settings toggle exists
-  /// for it. Scoring/statistics (Milestones 14 and 15) and problem-
-  /// character capture (Milestone 11) aren't wired up yet either; this
-  /// only exists so later work can hook in without further changes here.
+  /// for it.
   void Function(String character)? onCorrectResponse;
+
+  /// Called (at most once per character) once its turn's outcome is
+  /// finalized and [onCorrectResponse] never fired for it: wrong content,
+  /// no response at all, or a response whose *onset* itself came after
+  /// the window had already closed all count as missed. The exact
+  /// complement of [onCorrectResponse].
+  ///
+  /// Deliberately **not** fired synchronously the instant the response
+  /// window closes -- a match resolving after the window closes is not
+  /// the same as a late response, since [onCorrectResponse] itself judges
+  /// onset time, not match-completion time (a real recognizer commonly
+  /// takes hundreds of ms past the window's own close to finish matching
+  /// speech that started well within it, occasionally over a second).
+  /// Firing at close time raced that pipeline and lost: an on-time
+  /// response whose match simply hadn't resolved yet got wrongly reported
+  /// as missed here moments before also being (correctly) reported as
+  /// correct via [onCorrectResponse] -- confirmed on-device (2026-08-23)
+  /// as the cause of nearly every character in a session getting
+  /// auto-flagged as a problem character regardless of whether it was
+  /// actually answered correctly.
+  ///
+  /// A first fix deferred the check to the *next* character's turn
+  /// beginning instead of the window closing -- an improvement, but still
+  /// not a safe bound: on-device data (2026-08-24, 24WPM/700ms) showed
+  /// match latency routinely outlasting a single turn's own cadence,
+  /// so this fired *again*, now for a response that was on track to be
+  /// correctly credited a turn or two later. One character (D) came back
+  /// with 5 misses that session despite genuinely being answered
+  /// correctly 4 of those 5 times. [_pendingTurns] fixes this properly:
+  /// a closed-but-uncredited turn stays eligible for a late credit for
+  /// [_pendingResponseTimeout] of real time (not turn-boundaries), and
+  /// only fires this once that's elapsed with no credit -- see
+  /// [_finalizeMissed]. Never fires for a turn [stop] cut short mid-
+  /// window (its window never finished closing at all, so it never
+  /// entered [_pendingTurns] to begin with).
+  void Function(String character)? onMissedResponse;
+
+  // Reports [turn] as missed and drops it from [_pendingTurns] -- called
+  // either by its own finalize [Timer] elapsing with no credit, or
+  // directly by [stop] to finalize whatever's still outstanding rather
+  // than leave it to a timer that a stopped engine will never let fire.
+  // Cancelling the timer here (not just in [submitResponse]'s credit
+  // path) is what makes the [stop] call site safe -- otherwise its own
+  // still-pending finalize [Timer] outlives the engine.
+  void _finalizeMissed(_OutstandingTurn turn) {
+    turn.finalizeTimer?.cancel();
+    _pendingTurns.remove(turn);
+    onMissedResponse?.call(turn.character);
+  }
 
   /// Whether the computer should announce each character's answer at
   /// all -- checked once per character, at the moment its turn is
@@ -122,27 +218,78 @@ class TrainingEngine {
   /// recognition resolves after the *next* turn has already started,
   /// the response still attributes to the turn it was actually an
   /// attempt for ([at]'s own `character`), not whatever's currently
-  /// awaited. Omitted (the default), this falls back to exactly the
-  /// live-state check above -- what a listener with no separate onset
-  /// moment to hook (`SpeechToTextResponseListener`) gets.
+  /// awaited -- including, per [_pendingTurns], one further back than
+  /// that.
+  ///
+  /// Omitted (the default) -- meant for a listener with no separate
+  /// onset moment to hook *at all* -- skips the live-state deadline
+  /// check entirely and goes straight to the current/pending search
+  /// below, unconditionally, crediting on content match alone within
+  /// [_pendingResponseTimeout] with no timing judgment whatsoever.
+  /// `SpeechToTextResponseListener` originally used this path
+  /// unconditionally (it only ever got a finished transcript result,
+  /// with no sound-level/VAD hook to approximate onset from) -- on-device
+  /// data (2026-08-26, 30WPM/800ms) showed why the live-state fallback
+  /// this replaced doesn't work for such a listener even as an
+  /// approximation: `package:speech_to_text`'s result lag routinely
+  /// exceeds a single turn's own cadence, so by the time *any* result
+  /// arrives, live state has already advanced at least one full turn
+  /// past the one it's actually an answer for.
+  ///
+  /// It later gained real onset detection and stopped using this path at
+  /// all, for the opposite reason: on-device data (2026-08-28) showed its
+  /// underlying `onSoundLevelChange` callback can go silent for many
+  /// seconds at a stretch while transcription keeps working fine, and
+  /// `at: null` in that gap meant "no timing enforcement," not "no
+  /// timing evidence" -- confirmed as the cause of 7 false wins in one
+  /// session where the learner deliberately answered late throughout that
+  /// silent stretch. This parameter now stays reserved for a listener
+  /// that genuinely has no onset concept at all, not one whose onset
+  /// detection can occasionally, silently come up empty.
   void submitResponse(String character, {ResponseWindowSnapshot? at}) {
     final awaitingCharacter = at?.character ?? _awaitingResponseFor;
     final windowOpen = at?.windowOpen ?? _responseWindowOpen;
-    // windowOpen surfaces the actual "beat the computer" deadline
-    // (morseEnd..answerStart, via [_windowOpenTimer]/[_windowCloseTimer]
-    // below) directly -- awaiting/respondedTo alone don't distinguish a
-    // content mismatch from a same-character response that simply
-    // arrived after the window had already closed, which on-device
-    // debugging (Milestone 13 step 5) needs to tell apart.
     logDebug(
       'submitResponse($character) awaiting=$awaitingCharacter '
-      'respondedTo=$_respondedTo windowOpen=$windowOpen',
+      'windowOpen=$windowOpen',
     );
-    if (character != awaitingCharacter || character == _respondedTo) {
+    // windowOpen surfaces the actual "beat the computer" deadline
+    // (morseEnd..answerStart, via [_windowOpenTimer]/[_windowCloseTimer]
+    // below) directly -- content matching alone doesn't distinguish a
+    // mismatch from a same-character response that simply arrived after
+    // its own window had already closed, which on-device debugging
+    // (Milestone 13 step 5) needs to tell apart. Skipped for a no-onset
+    // listener ([at] null) -- see this method's own doc comment.
+    if (at != null && (character != awaitingCharacter || !windowOpen)) {
       return;
     }
-    if (!windowOpen) return;
-    _respondedTo = character;
+
+    // The current turn is the overwhelmingly common case (matched by
+    // object identity with [_currentTurn], not just character, so a
+    // duplicate response for an *already*-credited current turn falls
+    // through to the pending search below and correctly finds nothing).
+    // Otherwise this is a late credit for an older, already-closed turn
+    // -- search oldest-first so a character that recurs while an earlier
+    // instance is still pending resolves to that earlier one first.
+    _OutstandingTurn? turn;
+    final current = _currentTurn;
+    if (current != null &&
+        current.character == character &&
+        !current.credited) {
+      turn = current;
+    } else {
+      for (final pending in _pendingTurns) {
+        if (pending.character == character && !pending.credited) {
+          turn = pending;
+          break;
+        }
+      }
+    }
+    if (turn == null) return;
+
+    turn.credited = true;
+    turn.finalizeTimer?.cancel();
+    _pendingTurns.remove(turn);
     onCorrectResponse?.call(character);
   }
 
@@ -203,8 +350,20 @@ class TrainingEngine {
     _running = false;
     _timer?.cancel();
     _timer = null;
+    // Finalizes every still-outstanding turn as missed before clearing
+    // state below, rather than leaving them to their own finalize
+    // [Timer]s -- those get cancelled by [stop] just like every other
+    // pending timer, and a stopped engine should report a complete,
+    // deterministic tally rather than one that depends on whether Stop
+    // happened to land before or after a given turn's own timeout. A
+    // turn still mid-window when Stop lands never made it into
+    // [_pendingTurns] to begin with, so it's correctly left unreported
+    // either way (see [onMissedResponse]'s doc comment).
+    for (final turn in List<_OutstandingTurn>.of(_pendingTurns)) {
+      _finalizeMissed(turn);
+    }
     _awaitingResponseFor = null;
-    _respondedTo = null;
+    _currentTurn = null;
     _responseWindowOpen = false;
     _windowOpenTimer?.cancel();
     _windowOpenTimer = null;
@@ -360,8 +519,13 @@ class TrainingEngine {
             totalDuration: Duration.zero,
             hasAnswer: false,
           );
+      // The previous turn's own outcome (if any) is *not* finalized here
+      // -- see [_pendingTurns]'s doc comment for why turn-boundary
+      // crossing is no longer what that depends on; it stays outstanding
+      // in [_pendingTurns], eligible for a late credit, independent of
+      // however many further turns start in the meantime.
       _awaitingResponseFor = character;
-      _respondedTo = null;
+      _currentTurn = _OutstandingTurn(character);
       _responseWindowOpen = false;
       _windowOpenTimer?.cancel();
       _windowCloseTimer?.cancel();
@@ -380,10 +544,19 @@ class TrainingEngine {
       _windowOpenTimer = Timer(resolvedTiming.morseEnd, () {
         _responseWindowOpen = true;
         logDebug('windowOpen($character): opened');
+        onResponseWindowOpened?.call(character);
       });
+      final closingTurn = _currentTurn!;
       _windowCloseTimer = Timer(resolvedTiming.answerStart, () {
         _responseWindowOpen = false;
         logDebug('windowOpen($character): closed');
+        if (closingTurn.credited)
+          return; // already credited -- nothing to track
+        closingTurn.finalizeTimer = Timer(
+          _pendingResponseTimeout,
+          () => _finalizeMissed(closingTurn),
+        );
+        _pendingTurns.add(closingTurn);
       });
 
       // Pre-fetch the *next* turn now, overlapping its render+
@@ -446,4 +619,20 @@ class TrainingEngine {
     });
     return completer.future;
   }
+}
+
+/// One character's turn, tracked from the moment it's generated until
+/// [TrainingEngine] finalizes it as either credited ([submitResponse]) or
+/// missed ([TrainingEngine._finalizeMissed]) -- see
+/// [TrainingEngine._pendingTurns]'s doc comment for why this needs to be
+/// its own identity-bearing object rather than a couple of scalar fields.
+class _OutstandingTurn {
+  _OutstandingTurn(this.character);
+
+  final String character;
+  bool credited = false;
+  // Set only once this turn's response window has closed (see
+  // [TrainingEngine]'s `_windowCloseTimer`) -- null while the window is
+  // still open, since nothing needs to time out yet.
+  Timer? finalizeTimer;
 }
