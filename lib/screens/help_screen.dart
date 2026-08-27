@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../app_version.dart';
+
 /// One entry in the Help screen's table of contents and the matching
 /// body section below it -- [icon]/[color] are shared by both, per
 /// Bill's request that the TOC entry and its section header read as
@@ -252,6 +254,17 @@ class _HelpScreenState extends State<HelpScreen> {
                       ),
                       const SizedBox(height: 32),
                     ],
+                    Center(
+                      child: Text(
+                        'Version $appVersion',
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ),
                     const _CreatedByLink(),
                   ],
                 ),

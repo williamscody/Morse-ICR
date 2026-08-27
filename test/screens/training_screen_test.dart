@@ -351,7 +351,9 @@ void main() {
     expect(chip.showCheckmark, isFalse);
   });
 
-  testWidgets('all four character set chips fit on one line', (tester) async {
+  testWidgets('all three character set chips fit on one line', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       wrap(
         TrainingScreen(
@@ -365,13 +367,18 @@ void main() {
       ),
     );
 
-    final labels = ['A-Z', '0-9', 'Punct', 'Word'];
+    final labels = ['A-Z', '0-9', 'Punct'];
     final tops = <double>[];
     for (final label in labels) {
       expect(find.text(label), findsOneWidget);
       tops.add(tester.getTopLeft(find.text(label)).dy);
     }
     expect(tops.toSet(), hasLength(1));
+
+    // Word (whole-word recognition) has no implementation behind it yet
+    // and is hidden from this row until it does (Bill, 2026-08-31) --
+    // still a real CharacterSetType, just not offered here.
+    expect(find.text('Word'), findsNothing);
   });
 
   testWidgets(

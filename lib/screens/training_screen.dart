@@ -306,10 +306,16 @@ class _TrainingScreenState extends State<TrainingScreen>
         _extraGapMs = settings.extraGapMs;
         _voiceEnabled = settings.voiceEnabled;
         _recognitionEnabled = settings.recognitionEnabled;
+        // Excludes Word even if a learner selected it before it was
+        // hidden from the chip row above -- otherwise a persisted
+        // selection of just Word would restore to an active set with no
+        // characters in it (charactersForSelection) and no way to fix
+        // that from the UI, since there's no chip left to deselect it
+        // with (Bill, 2026-08-31).
         final restored = {
           for (final name in settings.selectedCharacterSetNames)
             CharacterSetType.values.asNameMap()[name],
-        }..removeWhere((type) => type == null);
+        }..removeWhere((type) => type == null || type == CharacterSetType.words);
         if (restored.isNotEmpty) {
           _selectedCharacterSets
             ..clear()
@@ -1166,12 +1172,36 @@ class _TrainingScreenState extends State<TrainingScreen>
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            for (final type in CharacterSetType.values)
+                            // Word (whole-word recognition) is a future
+                            // mode with no implementation behind it yet
+                            // (see [CharacterSetType.words]'s own doc
+                            // comment) -- hidden here until it's built
+                            // (Bill, 2026-08-31), not removed from the
+                            // enum, so nothing else that iterates
+                            // [CharacterSetType.values] needs to change.
+                            for (final type in CharacterSetType.values.where(
+                              (type) => type != CharacterSetType.words,
+                            ))
                               FilterChip(
                                 label: Text(type.label),
                                 showCheckmark: false,
                                 selected: _selectedCharacterSets.contains(type),
                                 selectedColor: colorScheme.primaryContainer,
+                                // Explicit for both states -- Material 3's
+                                // default FilterChip only outlines the
+                                // unselected state and drops the border
+                                // entirely once selected, which read as
+                                // an inconsistent border between chips
+                                // once Word left only three of them
+                                // (Bill, 2026-08-31). A visible border on
+                                // every chip regardless of selection
+                                // matches the Focus button's own
+                                // consistent-outline treatment below.
+                                side: BorderSide(
+                                  color: _selectedCharacterSets.contains(type)
+                                      ? colorScheme.primary
+                                      : colorScheme.outline,
+                                ),
                                 onSelected: _isTraining
                                     ? null
                                     : (selected) {
