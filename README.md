@@ -94,7 +94,7 @@ Created by K3CDY, [Cody Cabana Productions, LLC](https://codycabanaproductions.c
 
 Acknowledgements:
 - http://morsecode.world - the best online Morse training resource
-- http://CWInnovations.net - the place to lean conversational Morse code
+- http://CWInnovations.net - the place to learn conversational Morse code
 
 ---
 
