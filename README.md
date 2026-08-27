@@ -88,3 +88,10 @@ A few limits are inherent to any speech recognizer and not fixable through setti
 ---
 
 Created by K3CDY, [Cody Cabana Productions, LLC](https://codycabanaproductions.com).
+
+---
+
+☕ **Enjoying Morse ICR?**  
+If you find the app useful, consider [buying me a coffee](https://buymeacoffee.com/codycabana). It helps support continued development.
+
+---
