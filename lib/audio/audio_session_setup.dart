@@ -1,9 +1,9 @@
 import 'package:audio_session/audio_session.dart';
 
-/// Configures the app's single shared AVAudioSession for Morse tone and
+/// Configures the app's single shared audio session for Morse tone and
 /// TTS playback (main.dart's original comment: neither just_audio nor
-/// flutter_tts touch AVAudioSession themselves, so this is the sole
-/// thing governing the shared session's category).
+/// flutter_tts touch AVAudioSession/AudioManager themselves, so this is
+/// the sole thing governing the shared session's category/attributes).
 ///
 /// Called once at cold start, and again whenever the app returns to the
 /// foreground -- iOS can silently leave the session deactivated or on
@@ -21,6 +21,20 @@ Future<void> configureAudioSession() async {
   await session.configure(
     const AudioSessionConfiguration(
       avAudioSessionCategory: AVAudioSessionCategory.playback,
+      // Android has no equivalent of avAudioSessionCategory (ignored
+      // there) -- these are its own fields, needed so Android requests
+      // proper exclusive audio focus for this session instead of
+      // whatever audio_session's bare platform defaults are (section 42,
+      // Android background audio). AndroidAudioFocusGainType already
+      // defaults to `.gain` (exclusive) even when unset; contentType/
+      // usage don't have a meaningful default, so those are set
+      // explicitly. `music`/`media` is the standard pairing for an app
+      // whose own playback is the primary content, matching
+      // AudioSessionConfiguration's own built-in `.music()` recipe.
+      androidAudioAttributes: AndroidAudioAttributes(
+        contentType: AndroidAudioContentType.music,
+        usage: AndroidAudioUsage.media,
+      ),
     ),
   );
 }

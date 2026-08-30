@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../audio/audio_session_setup.dart';
 import '../audio/keep_alive_audio_loop.dart';
+import '../audio/notification_permission.dart';
 import '../audio/training_audio_handler.dart';
 import '../audio/turn_audio_engine.dart';
 import '../debug_log.dart';
@@ -232,7 +234,16 @@ class _TrainingScreenState extends State<TrainingScreen>
       final turnEngine = TurnAudioEngine(answerSpeaker: _answerSpeaker);
       _turnAudioEngine = turnEngine;
       _trainingEngine = TrainingEngine(turnPlayer: turnEngine);
-      _keepAliveLoop = KeepAliveAudioLoop();
+      // iOS-only (see KeepAliveAudioLoop's own doc comment): it exists
+      // purely to keep iOS's UIBackgroundModes "audio" grant continuously
+      // satisfied. Android has no equivalent heuristic to satisfy -- once
+      // the foreground service (section 42, Android background audio) is
+      // running, the process stays scheduled regardless of what audio is
+      // or isn't playing at any given instant, so this near-silent tone
+      // would just be redundant background CPU/battery use there. Every
+      // call site below already reads this via `?.`, so leaving it null
+      // on Android makes them all no-ops for free.
+      if (Platform.isIOS) _keepAliveLoop = KeepAliveAudioLoop();
     }
     _problemCharacterStore =
         widget._injectedProblemCharacterStore ?? FileProblemCharacterStore();
@@ -410,6 +421,13 @@ class _TrainingScreenState extends State<TrainingScreen>
         _sessionMisses[character] = (_sessionMisses[character] ?? 0) + 1;
       }
     };
+    // Lets the lock screen's Play/Pause control drive the same
+    // pause/resume toggle the on-screen buttons use -- [_togglePause] is
+    // already bidirectional (it checks [_isPaused] itself), so either
+    // callback wired to it produces the correct result regardless of
+    // which direction the lock screen's single toggle was actually in.
+    trainingAudioHandler?.onPlayRequested = _togglePause;
+    trainingAudioHandler?.onPauseRequested = _togglePause;
   }
 
   @override
@@ -422,6 +440,15 @@ class _TrainingScreenState extends State<TrainingScreen>
     _turnAudioEngine?.dispose();
     _keepAliveLoop?.dispose();
     _responseListener.stopListening();
+    // trainingAudioHandler outlives this screen (set once at app startup)
+    // -- clear its callbacks rather than leave them pointing at a
+    // disposed State.
+    if (trainingAudioHandler?.onPlayRequested == _togglePause) {
+      trainingAudioHandler?.onPlayRequested = null;
+    }
+    if (trainingAudioHandler?.onPauseRequested == _togglePause) {
+      trainingAudioHandler?.onPauseRequested = null;
+    }
     super.dispose();
   }
 
@@ -639,6 +666,11 @@ class _TrainingScreenState extends State<TrainingScreen>
       logDebug('start: reconfigure/activate failed: $e');
     }
     trainingAudioHandler?.reportTraining();
+    // Fire-and-forget -- a denial doesn't block training, it just means
+    // Android's foreground-service notification (and lock-screen card)
+    // won't be visible (section 42, Android background audio). A no-op
+    // on iOS and pre-13 Android.
+    unawaited(requestNotificationPermissionIfNeeded());
     // Fire-and-forget, not awaited: on-device measurement found this
     // call alone can take ~10s to resolve (vs. ~100-300ms for the
     // Morse player's own play() calls) -- likely LoopMode interacting
@@ -682,7 +714,25 @@ class _TrainingScreenState extends State<TrainingScreen>
   // platform calls Start/Stop do, and a Stop tap racing a still-in-flight
   // Resume is exactly the kind of state-desync [_togglingTraining] was
   // introduced to prevent there.
+  //
+  // [!_isTraining] guard: on Android, the OS's own "media resumption"
+  // feature (section 42, Android background audio) independently binds
+  // to this app's declared MediaBrowserService the moment a session ever
+  // starts, and keeps showing a stale Play/Pause card for a while even
+  // after a real Stop -- confirmed on-device via `dumpsys activity
+  // services` showing com.android.systemui itself holding the service
+  // bound, which is what blocks the service from actually tearing down
+  // on its own schedule. That's an Android platform behavior for any app
+  // using a MediaSession, not a bug in this app's own Stop path (which
+  // does correctly transition to idle) -- but it means a stale tap on
+  // that lingering card can still reach [onPlayRequested]/
+  // [onPauseRequested] after the real session is long gone. Without this
+  // guard, [_isPaused] alone decides pause-vs-resume regardless of
+  // [_isTraining], and a stray tap would call [_pauseUnguarded] on a
+  // session that isn't running, leaving [_isPaused] stuck true while
+  // [_isTraining] is false.
   Future<void> _togglePause() async {
+    if (!_isTraining) return;
     if (_togglingTraining) return;
     _togglingTraining = true;
     try {
@@ -733,11 +783,10 @@ class _TrainingScreenState extends State<TrainingScreen>
         }),
       );
     }
-    // Drops the lock-screen "Now Playing" card, same as a real Stop --
-    // consistent with reportIdle's own doc comment ("mirrors the
-    // underlying audio actually going silent"), which is exactly what
-    // happens here too.
-    trainingAudioHandler?.reportIdle();
+    // Keeps the lock-screen "Now Playing" card up, showing a Play
+    // control, rather than dropping it the way a real Stop does -- the
+    // session itself hasn't ended.
+    trainingAudioHandler?.reportPaused();
     _cancelCountdownTicker();
     _cancelElapsedTicker();
     if (!mounted) return;

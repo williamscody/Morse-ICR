@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morse_icr/audio/training_audio_handler.dart';
 import 'package:morse_icr/audio/turn_player.dart';
 import 'package:morse_icr/morse/morse_event.dart';
 import 'package:morse_icr/screens/settings_screen.dart';
@@ -577,6 +578,92 @@ void main() {
     );
     expect(chip.onSelected, isNotNull);
   });
+
+  testWidgets(
+    "the lock screen's Play/Pause control drives the same pause/resume "
+    'toggle as the on-screen buttons',
+    (tester) async {
+      // trainingAudioHandler is a process-wide global (set once at app
+      // startup outside of tests) -- installed here for the duration of
+      // this test only, torn back down to null afterward so it can't leak
+      // into any other test.
+      final handler = TrainingAudioHandler();
+      trainingAudioHandler = handler;
+      addTearDown(() => trainingAudioHandler = null);
+
+      await tester.pumpWidget(wrapTraining());
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      expect(handler.playbackState.value.playing, isTrue);
+
+      // iOS calls pause() when the lock screen's single Play/Pause toggle
+      // is tapped while the Now Playing card shows it as playing.
+      await handler.pause();
+      await tester.pump();
+      expect(find.text('Resume'), findsOneWidget);
+      expect(handler.playbackState.value.playing, isFalse);
+
+      // iOS calls play() when that same toggle is tapped while paused.
+      await handler.play();
+      await tester.pump();
+      expect(find.text('Pause'), findsOneWidget);
+      expect(handler.playbackState.value.playing, isTrue);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'a stale lock-screen/notification Play tap after a real Stop is a '
+    'no-op, not a corrupted paused-but-idle state',
+    (tester) async {
+      // Android's own "media resumption" system feature independently
+      // binds to this app's declared MediaBrowserService and can keep
+      // showing a stale Play/Pause card for a while after a real Stop
+      // (confirmed on-device via dumpsys -- see _togglePause's own doc
+      // comment) -- a tap on it then still reaches onPlayRequested/
+      // onPauseRequested with no session actually running.
+      final handler = TrainingAudioHandler();
+      trainingAudioHandler = handler;
+      addTearDown(() => trainingAudioHandler = null);
+
+      await tester.pumpWidget(wrapTraining());
+
+      await tester.ensureVisible(find.text('Start'));
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+      expect(find.text('Idle'), findsOneWidget);
+
+      // A stray play()/pause() call reaching the handler after Stop --
+      // simulating exactly that stale card tap.
+      await handler.play();
+      await tester.pump();
+      await handler.pause();
+      await tester.pump();
+
+      expect(find.text('Idle'), findsOneWidget);
+      expect(find.text('Start'), findsOneWidget);
+      expect(find.text('Resume'), findsNothing);
+      expect(find.text('Pause'), findsNothing);
+
+      // Confirms the guard didn't just hide a stray _isPaused=true behind
+      // Idle's own button -- a subsequent legitimate Start still shows
+      // the normal Stop+Pause pair, not Resume+Stop.
+      await tester.tap(find.text('Start'));
+      await tester.pump();
+      expect(find.text('Stop'), findsOneWidget);
+      expect(find.text('Pause'), findsOneWidget);
+      expect(find.text('Resume'), findsNothing);
+
+      await tester.tap(find.text('Stop'));
+      await tester.pump();
+    },
+  );
 
   testWidgets('starts and stops listening for the learner\'s spoken response '
       'alongside Start/Stop', (tester) async {

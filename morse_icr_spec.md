@@ -1203,4 +1203,41 @@ Once a session is running, a Pause button appears on the main screen next to Sto
 - While paused, the main screen offers Resume (continue training, generating a fresh character rather than replaying the interrupted one) or Stop (end the session from here, exactly as tapping Stop while running would, including logging whatever time had actually elapsed before Pause was tapped).
 - Resuming rebuilds the session using whatever Character Speed, Recognition Time, Extra Gap, and Character Set/Focus values are current at the moment Resume is tapped -- the same "live while training" rule those controls already follow.
 
+# 42. Android Background Audio
+
+A training session must keep advancing accurately once the screen locks, on Android as well as iOS. The two platforms need genuinely different mechanisms to get there, even though the Dart-level architecture (TrainingEngine, the pre-mix audio buffer, TrainingAudioHandler) is shared unchanged between them.
+
+## Why the pre-mix architecture doesn't need to change
+
+Each turn's Morse tone, recognition-time silence, and spoken answer are still rendered into one continuous buffer and handed to the native player with a single `play()` call (section 26) -- once issued, that playback is governed by the OS's own audio pipeline, not by Dart. What *does* depend on the Dart isolate continuing to run is turn-to-turn advancement (`TrainingEngine`'s own `Timer` between turns) and response-window scoring (its open/close `Timer`s) -- pure bookkeeping, not audio content. iOS gets the isolate kept alive via `UIBackgroundModes: audio` plus a continuous near-silent keep-alive tone (`KeepAliveAudioLoop`) to keep that grant satisfied. Android has no equivalent grant from merely playing audio -- it requires a real foreground service.
+
+## What was added
+
+- `AndroidManifest.xml`: `WAKE_LOCK`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, and `POST_NOTIFICATIONS` permissions; `audio_service`'s own `AudioService` (foreground service, `foregroundServiceType="mediaPlayback"`) and `MediaButtonReceiver` declarations.
+- `MainActivity.kt`: extends `com.ryanheise.audioservice.AudioServiceActivity` instead of `FlutterActivity` directly, so the Activity shares the same Flutter engine/isolate the foreground service hosts -- that shared engine is what keeps running once the Activity itself is torn down by the screen locking.
+- `main.dart`: `AudioService.init(...)` now runs on Android as well as iOS, with `androidStopForegroundOnPause: false` -- a Pause (unlike a Stop) doesn't end the session, so the service stays in the foreground through it rather than dropping to a state Android is free to reclaim.
+- `audio_session_setup.dart`: `configureAudioSession()` now also sets `androidAudioAttributes` (content type `music`, usage `media`) alongside the existing iOS-only `avAudioSessionCategory`, so Android requests proper exclusive audio focus.
+- `notification_permission.dart` / a small `MainActivity.kt` method channel: requests the Android 13+ runtime `POST_NOTIFICATIONS` permission, best-effort, when Start is tapped. A denial doesn't block training -- the foreground service still runs and the session still advances -- it just means no visible notification/lock-screen card.
+- `KeepAliveAudioLoop` is now iOS-only (gated in `TrainingScreen.initState`) -- Android's foreground service keeps the process scheduled regardless of what audio is or isn't playing at a given instant, so the near-silent tone trick is pointless overhead there.
+
+## Notification/lock-screen behavior
+
+Functionally the same as iOS: a persistent media-style card with a working Play/Pause toggle, wired to the same `TrainingAudioHandler.onPlayRequested`/`onPauseRequested` callbacks (themselves forwarding to `TrainingScreen`'s own bidirectional pause/resume toggle) that already drive iOS's Now Playing card. Android's notification is visible in the notification shade at all times while the service is foregrounded, not just on the lock screen.
+
+## A known Android platform quirk: the stale card after Stop
+
+Confirmed on-device (`dumpsys activity services`): once a session has ever started, Android's own "media resumption" system feature independently binds `com.android.systemui` to this app's declared `MediaBrowserService`. Since a bound service stays alive as long as any client holds that binding, this can keep the notification/media card visible for a while after a real Stop, showing stale "Training in progress" text -- even though the app's own state has correctly returned to idle and the Dart-side `stop()` transition fires correctly. This is Android platform behavior for any app exposing a `MediaSession`, not a bug in this app's Stop path, and not something `audio_service`'s Dart API exposes a way to override. `TrainingScreen._togglePause` guards against a stale tap on that lingering card reaching `onPlayRequested`/`onPauseRequested` after the real session has ended (`if (!_isTraining) return;`), so the tap safely no-ops rather than leaving `_isPaused` stuck true while `_isTraining` is false.
+
+## Verified on-device (Android emulator, API 36)
+
+- A session locked mid-run kept generating and playing new turns throughout -- confirmed directly via logcat `AudioTrack: stop()` entries incrementing continuously (~30 distinct turns played over a ~32s locked window), not merely a timestamp that caught up on resume.
+- The foreground-service notification appeared correctly, with a functional Play/Pause toggle round-tripping through `TrainingAudioHandler` exactly like iOS's Now Playing card.
+- Pause/Resume from both the in-app buttons and the notification control worked correctly, including elapsed-time correctly excluding paused duration.
+- The Android 13+ `POST_NOTIFICATIONS` permission prompt fired correctly at Start.
+
+## Needs verification on a physical device
+
+- Real Doze/App Standby and OEM-specific battery-optimization behavior (Samsung, Xiaomi, OnePlus, and similar are notably more aggressive than stock Android or the emulator) over a realistic (many-minutes) locked session, not just the ~30s window verified on the emulator.
+- Whether Speech Recognition continues working while locked. Per this feature's own scope, this was never a primary requirement -- Speech Recognition is explicitly experimental (section 40), and no microphone-specific foreground-service type (`FOREGROUND_SERVICE_MICROPHONE`) was added speculatively. If recognition stops working while locked on a real device, that's an acceptable, known limitation, not a regression to chase.
+
 # End of Specification

@@ -5,6 +5,21 @@
          announced by the computer. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
 
+    <!-- audio_service (section 42, Android background audio): a training
+         session must keep advancing while the screen is locked, which on
+         Android requires a real foreground service rather than iOS's
+         continuous-audio background grant. WAKE_LOCK/FOREGROUND_SERVICE are
+         audio_service's own documented requirements;
+         FOREGROUND_SERVICE_MEDIA_PLAYBACK is mandatory (not just
+         recommended) once targeting SDK 34+, which this app already does;
+         POST_NOTIFICATIONS is the Android 13+ runtime-requested permission
+         the foreground service's own notification needs to actually be
+         visible (see notification_permission.dart). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:label="morse_icr"
         android:name="${applicationName}"
@@ -33,6 +48,34 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- audio_service's own foreground service, hosting the single
+             Flutter engine MainActivity now shares with it (see
+             AudioServiceActivity below), which is what keeps
+             TrainingEngine's turn-to-turn Timer running once the screen
+             locks and MainActivity itself is gone. -->
+        <service
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <!-- Routes the lock-screen/notification Play/Pause tap (and
+             hardware media-button presses) to TrainingAudioHandler's
+             play()/pause() overrides. -->
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
