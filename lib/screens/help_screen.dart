@@ -485,6 +485,7 @@ class _CreatedByLink extends StatelessWidget {
           onTap: _open,
           child: Text(
             'Created by K3CDY, Cody Cabana Productions, LLC.',
+            textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.primary,
               decoration: TextDecoration.underline,
