@@ -340,6 +340,7 @@ class _HelpScreenState extends State<HelpScreen> {
                       ),
                     ),
                     const _CreatedByLink(),
+                    const _CoffeeLink(),
                   ],
                 ),
               ),
@@ -487,6 +488,55 @@ class _CreatedByLink extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.primary,
               decoration: TextDecoration.underline,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The very-bottom-of-page support pitch, mirroring [_CreatedByLink]'s
+/// own tappable-attribution-line pattern -- opens the Buy Me a Coffee
+/// page in the device's own browser rather than an in-app WebView, for
+/// the same reason [_CreatedByLink] does.
+class _CoffeeLink extends StatelessWidget {
+  const _CoffeeLink();
+
+  static final Uri _url = Uri.parse('https://buymeacoffee.com/codycabana');
+
+  Future<void> _open() =>
+      launchUrl(_url, mode: LaunchMode.externalApplication);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Center(
+        child: InkWell(
+          onTap: _open,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              children: [
+                Text(
+                  '☕ Enjoying Morse ICR?',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'If you find the app useful, consider buying me a '
+                  'coffee. It helps support continued development.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
