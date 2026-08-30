@@ -64,12 +64,31 @@ Future<void> deactivateAudioSession() async {
 /// alone, since both arrive within the same post-announcement window.
 /// Headphones route audio into the ear instead of the room, removing
 /// that acoustic path entirely regardless of wired/Bluetooth latency.
+///
+/// On Android, `AudioManager.getDevices()` always includes a
+/// [AudioDeviceType.telephony] entry -- the cellular modem's own voice
+/// route -- regardless of whether a call is active or any accessory is
+/// plugged in (confirmed on-device: an emulator with nothing attached
+/// reports exactly `[builtInSpeaker, telephony]`). iOS's equivalent
+/// (`AVAudioSession.currentRoute`) never has a comparable always-present
+/// non-physical entry, so the original speaker/earpiece-only exclusion
+/// list worked there but let `telephony` silently satisfy this check on
+/// every Android device, meaning headphones were never actually
+/// required. [remoteSubmix] and [virtual] are excluded for the same
+/// reason -- Android/plugin-internal routes a user can't plug in or
+/// unplug, not real headphone hardware.
 Future<bool> hasNonSpeakerAudioOutput() async {
   final session = await AudioSession.instance;
   final outputs = await session.getDevices(includeInputs: false);
+  const nonPhysicalOutputTypes = {
+    AudioDeviceType.builtInSpeaker,
+    AudioDeviceType.builtInEarpiece,
+    AudioDeviceType.builtInSpeakerSafe,
+    AudioDeviceType.telephony,
+    AudioDeviceType.remoteSubmix,
+    AudioDeviceType.virtual,
+  };
   return outputs.any(
-    (device) =>
-        device.type != AudioDeviceType.builtInSpeaker &&
-        device.type != AudioDeviceType.builtInEarpiece,
+    (device) => !nonPhysicalOutputTypes.contains(device.type),
   );
 }
