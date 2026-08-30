@@ -9,6 +9,7 @@ Morse ICR is a Flutter-based Morse code training app for iOS and Android, built 
 ## Features
 
 - Adjustable Character Speed, Recognition Time, and Extra Gap to tune session difficulty
+- Pause and Resume a running session without losing your place
 - Sub-millisecond Recognition Time accuracy
 - Character Set selection (A-Z, 0-9, punctuation), or a custom Focus practice list
 - Focus keyboard with per-character heat-map accuracy coloring and an all-time "X% Correct" summary
@@ -29,6 +30,8 @@ The following is the content of the app's in-app Help page.
 Morse ICR plays a Morse code character, then gives you a short window to answer — by speaking or simply knowing it — before the computer's voice announces the character out loud. Answering correctly before the computer does is "beating the computer," this app's core training mechanic.
 
 Tap Start on the main screen to begin a session. Tap Stop, or let an active Timer memory count down to zero, to end one.
+
+Once a session is running, a Pause button appears next to Stop. Pause holds the session exactly where it is — character set, Timer countdown, and elapsed time all stay put — until you tap Resume to continue, or Stop to end the session from there.
 
 ### Character Speed, Recognition Time & Extra Gap
 
@@ -92,9 +95,14 @@ Created by K3CDY, [Cody Cabana Productions, LLC](https://codycabanaproductions.c
 
 ---
 
-Acknowledgements:
-- http://morsecode.world - the best online Morse training resource
-- http://CWInnovations.net - the place to learn conversational Morse code
+Acknowledgments
+
+Morse ICR was inspired by the Instant Character Recognition training methodology taught by CW Innovations and by the Morse Code training resources available at Morse Code World.
+
+Morse ICR is an independent application and is not affiliated with or endorsed by CW Innovations or Morse Code World.
+
+CW Innovations — https://cwinnovations.net
+Morse Code World — https://morsecode.world
 
 ---
 

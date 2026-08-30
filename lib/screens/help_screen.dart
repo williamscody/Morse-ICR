@@ -13,6 +13,7 @@ class _HelpSection {
     required this.icon,
     required this.color,
     required this.paragraphs,
+    this.links = const [],
   });
 
   final String title;
@@ -22,6 +23,17 @@ class _HelpSection {
   /// Rendered as separate blocks, in order. A paragraph starting with
   /// "- " is rendered as a bullet instead of plain body text.
   final List<String> paragraphs;
+
+  /// Tappable label/URL pairs rendered after [paragraphs], each opened
+  /// in the device's own browser via url_launcher.
+  final List<_HelpLink> links;
+}
+
+class _HelpLink {
+  const _HelpLink(this.label, this.url);
+
+  final String label;
+  final String url;
 }
 
 final List<_HelpSection> _helpSections = [
@@ -37,6 +49,10 @@ final List<_HelpSection> _helpSections = [
           'computer," this app\'s core training mechanic.',
       'Tap Start on the main screen to begin a session. Tap Stop, or let '
           'an active Timer memory count down to zero, to end one.',
+      'Once a session is running, a Pause button appears next to Stop. '
+          'Pause holds the session exactly where it is -- character set, '
+          'Timer countdown, and elapsed time all stay put -- until you tap '
+          'Resume to continue, or Stop to end the session from there.',
     ],
   ),
   _HelpSection(
@@ -105,7 +121,7 @@ final List<_HelpSection> _helpSections = [
     ],
   ),
   _HelpSection(
-    title: 'Voice & Speech Recognition',
+    title: 'Voice & Speech Recognition (Experimental)',
     icon: Icons.record_voice_over,
     color: Colors.red,
     paragraphs: [
@@ -116,6 +132,18 @@ final List<_HelpSection> _helpSections = [
           '(wired or Bluetooth). If Speech Recognition is on and no '
           'headphones are connected, the app will ask you to connect '
           'them or turn the toggle off.',
+      'Speech Recognition is an experimental feature. It relies on your '
+          'device\'s on-board speech recognizer and voice-activity '
+          'detection, both of which are inherently imperfect -- expect '
+          'occasional false credit for an answer you didn\'t actually say '
+          'in time, occasional missed credit for one you did, and letters '
+          'that sound alike (B/P, M/N, and similar pairs) being confused '
+          'for each other. Background noise, microphone placement, and '
+          'accent all affect accuracy, and behavior can vary between '
+          'iOS and Android and between individual devices. See "Getting '
+          'the Best Recognition Accuracy" below for ways to reduce these '
+          'errors, but some baseline error rate is inherent to the '
+          'technology and not fully eliminable through settings.',
     ],
   ),
   _HelpSection(
@@ -203,6 +231,22 @@ final List<_HelpSection> _helpSections = [
           'Morse ICR does not pick a voice for you here -- whichever '
           'voice you set as the system default is the one it speaks '
           'with.',
+    ],
+  ),
+  _HelpSection(
+    title: 'Acknowledgments',
+    icon: Icons.volunteer_activism,
+    color: Colors.deepPurple,
+    paragraphs: [
+      'Morse ICR was inspired by the Instant Character Recognition '
+          'training methodology taught by CW Innovations and by the '
+          'Morse Code training resources available at Morse Code World.',
+      'Morse ICR is an independent application and is not affiliated '
+          'with or endorsed by CW Innovations or Morse Code World.',
+    ],
+    links: [
+      _HelpLink('CW Innovations', 'https://cwinnovations.net'),
+      _HelpLink('Morse Code World', 'https://morsecode.world'),
     ],
   ),
 ];
@@ -385,7 +429,36 @@ class _HelpSectionView extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),
+        for (final link in section.links) _HelpSectionLink(link: link),
       ],
+    );
+  }
+}
+
+/// A tappable label/URL line within a section's body, opened in the
+/// device's own browser (same `url_launcher` pattern as [_CreatedByLink]).
+class _HelpSectionLink extends StatelessWidget {
+  const _HelpSectionLink({required this.link});
+
+  final _HelpLink link;
+
+  Future<void> _open() =>
+      launchUrl(Uri.parse(link.url), mode: LaunchMode.externalApplication);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: _open,
+        child: Text(
+          '${link.label} — ${link.url}',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            decoration: TextDecoration.underline,
+          ),
+        ),
+      ),
     );
   }
 }

@@ -146,6 +146,22 @@ class _TrainingScreenState extends State<TrainingScreen>
   Duration _elapsedTime = Duration.zero;
   Timer? _elapsedTicker;
   bool _isTraining = false;
+  // True only between a Pause tap and the matching Resume/Stop -- the
+  // session itself stays "in progress" (_isTraining remains true, so
+  // Character Set/Focus/Timer-row stay disabled exactly as they already
+  // are for the rest of a session) but the training engine, response
+  // listener, and audio session are torn down exactly the way Stop tears
+  // them down, and rebuilt exactly the way Start rebuilds them on Resume
+  // -- reusing that already-hardened teardown/rebuild path rather than
+  // inventing a genuinely-still-running "paused" engine state.
+  bool _isPaused = false;
+  // Set the instant Pause is tapped, consumed by Resume to shift
+  // [_sessionStartedAt] forward by however long the pause actually
+  // lasted -- so both the live elapsed-time ticker and the eventual
+  // training-log duration (both computed as `DateTime.now() -
+  // _sessionStartedAt`) transparently exclude paused time without a
+  // separate accumulator field.
+  DateTime? _pausedAt;
   // Not shown in the UI -- tracked ahead of character-level statistics
   // (Milestone 15), which will need a played-character count. Not part
   // of the training log (Milestone 10, morse_icr_spec.md section 21)
@@ -559,6 +575,8 @@ class _TrainingScreenState extends State<TrainingScreen>
       _cancelElapsedTicker();
       setState(() {
         _isTraining = false;
+        _isPaused = false;
+        _pausedAt = null;
         // Reset to the memory's stored duration rather than leaving the
         // display sitting mid-countdown or at zero (morse_icr_spec.md
         // section 9: "the timer value should be restored to its most
@@ -656,6 +674,145 @@ class _TrainingScreenState extends State<TrainingScreen>
       recognitionTime: Duration(milliseconds: _recognitionTimeMs),
       extraGap: Duration(milliseconds: _extraGapMs),
     );
+  }
+
+  // Reuses [_togglingTraining] as a single "a main-button action is in
+  // flight" guard shared with Start/Stop, rather than a separate flag --
+  // Pause/Resume await several of the same real, potentially slow
+  // platform calls Start/Stop do, and a Stop tap racing a still-in-flight
+  // Resume is exactly the kind of state-desync [_togglingTraining] was
+  // introduced to prevent there.
+  Future<void> _togglePause() async {
+    if (_togglingTraining) return;
+    _togglingTraining = true;
+    try {
+      if (_isPaused) {
+        await _resumeUnguarded();
+      } else {
+        await _pauseUnguarded();
+      }
+    } finally {
+      _togglingTraining = false;
+    }
+  }
+
+  // Tears the session down exactly the way Stop does -- engine, response
+  // listener, keep-alive tone, and the shared audio session -- without
+  // recording a training-log entry or touching problem-character/score
+  // persistence (unlike Stop, this session isn't over: [_isTraining]
+  // stays true, [_sessionHits]/[_sessionMisses] are left alone for
+  // [_resumeUnguarded] or a later real Stop to eventually persist). Both
+  // tickers are cancelled but *not* reset -- [_countdownRemaining] and
+  // [_elapsedTime] stay frozen at whatever they last showed, for
+  // [_resumeCountdownTicker]/[_startElapsedTicker] to continue from.
+  Future<void> _pauseUnguarded() async {
+    logDebug('pause: tapped');
+    _pausedAt = DateTime.now();
+    await _trainingEngine.stop();
+    try {
+      await _responseListener.stopListening().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (e) {
+      logDebug('pause: stopListening failed: $e');
+    }
+    if (!mounted) return;
+    try {
+      await widget._deactivateAudioSessionOnStop().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (_) {
+      // Not fatal -- audio output is an external boundary the learner
+      // can't control mid-session.
+    }
+    final keepAliveLoop = _keepAliveLoop;
+    if (keepAliveLoop != null) {
+      unawaited(
+        keepAliveLoop.stop().catchError((Object e) {
+          logDebug('pause: keep-alive loop stop failed: $e');
+        }),
+      );
+    }
+    // Drops the lock-screen "Now Playing" card, same as a real Stop --
+    // consistent with reportIdle's own doc comment ("mirrors the
+    // underlying audio actually going silent"), which is exactly what
+    // happens here too.
+    trainingAudioHandler?.reportIdle();
+    _cancelCountdownTicker();
+    _cancelElapsedTicker();
+    if (!mounted) return;
+    setState(() => _isPaused = true);
+    logDebug('pause: done');
+  }
+
+  // Rebuilds the session exactly the way Start does -- headphone check,
+  // audio session reconfigure/activate, keep-alive tone, response
+  // listener, and a fresh TrainingEngine.start() call -- using the
+  // *live* current speed/recognition-time/extra-gap/character-set values
+  // rather than the ones frozen at the original Start, matching how
+  // those controls already stay live-adjustable mid-session.
+  Future<void> _resumeUnguarded() async {
+    logDebug('resume: tapped');
+    if (_recognitionEnabled && !await widget._headphonesConnectedCheck()) {
+      if (!mounted) return;
+      _showHeadphonesRequiredMessage();
+      return;
+    }
+    final pausedAt = _pausedAt;
+    final startedAt = _sessionStartedAt;
+    if (pausedAt != null && startedAt != null) {
+      // Shifts the session's own start-time anchor forward by exactly
+      // how long this pause lasted, so every later computation still
+      // derived from it (the elapsed-time ticker, and the eventual
+      // training-log duration at a real Stop) transparently excludes
+      // paused time with no separate accumulator field needed.
+      _sessionStartedAt = startedAt.add(DateTime.now().difference(pausedAt));
+    }
+    _pausedAt = null;
+    const externalCallTimeout = Duration(seconds: 5);
+    try {
+      await widget._reconfigureAudioSessionOnStart().timeout(
+        externalCallTimeout,
+      );
+      await widget._activateAudioSessionOnStart().timeout(externalCallTimeout);
+      logDebug('resume: session reconfigured and activated');
+    } catch (e) {
+      logDebug('resume: reconfigure/activate failed: $e');
+    }
+    trainingAudioHandler?.reportTraining();
+    final keepAliveLoop = _keepAliveLoop;
+    if (keepAliveLoop != null) {
+      unawaited(
+        keepAliveLoop.start().catchError((Object e) {
+          logDebug('resume: keep-alive loop failed: $e');
+        }),
+      );
+    }
+    final characters = _activeCharacters;
+    if (_recognitionEnabled) {
+      final responseListener = _responseListener;
+      if (responseListener is VoiceResponseListener) {
+        responseListener.updateActiveCharacters(characters);
+      }
+      try {
+        await _responseListener
+            .startListening(_trainingEngine.submitResponse)
+            .timeout(externalCallTimeout);
+      } catch (e) {
+        logDebug('resume: startListening failed: $e');
+      }
+    }
+    _trainingEngine.start(
+      characters: characters,
+      wpm: _wpm.toDouble(),
+      recognitionTime: Duration(milliseconds: _recognitionTimeMs),
+      extraGap: Duration(milliseconds: _extraGapMs),
+    );
+    _resumeCountdownTicker();
+    _startElapsedTicker();
+    if (!mounted) return;
+    setState(() => _isPaused = false);
+    logDebug('resume: done');
   }
 
   // The problem-character set, when active, entirely replaces the
@@ -804,6 +961,26 @@ class _TrainingScreenState extends State<TrainingScreen>
     final duration = _countdownTimerConfig.selectedDuration;
     if (duration == null || duration <= Duration.zero) return;
     _countdownRemaining = duration;
+    _runCountdownTicker();
+  }
+
+  // Restarts the countdown from wherever [_countdownRemaining] was frozen
+  // at when Pause cancelled the previous ticker (see [_pauseUnguarded]) --
+  // a no-op if there's no active timer memory to resume (the Timer row
+  // was "Off" for this whole session).
+  void _resumeCountdownTicker() {
+    if (_countdownRemaining == null) return;
+    _runCountdownTicker();
+  }
+
+  void _runCountdownTicker() {
+    // Read fresh rather than closing over a value captured back at
+    // [_startCountdownTicker] -- the Timer row is disabled for the whole
+    // session (including while paused), so this can't actually change
+    // mid-session, but re-reading means [_resumeCountdownTicker] doesn't
+    // need its own copy threaded through a pause/resume boundary to log
+    // the timer's original full duration correctly on eventual expiry.
+    final fullDuration = _countdownTimerConfig.selectedDuration;
     _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       final remaining = _countdownRemaining;
       if (remaining == null) return;
@@ -814,10 +991,10 @@ class _TrainingScreenState extends State<TrainingScreen>
         // Section 9: "Stop generating new training characters... Stop
         // the recognition cycle" -- the same full Stop path a manual tap
         // runs, so nothing about session teardown needs duplicating
-        // here. [duration] (not the possibly-short-by-a-tick wall-clock
-        // elapsed time) is what gets logged -- see [_toggleTraining]'s
-        // [recordedDuration] doc.
-        unawaited(_toggleTraining(recordedDuration: duration));
+        // here. [fullDuration] (not the possibly-short-by-a-tick
+        // wall-clock elapsed time) is what gets logged -- see
+        // [_toggleTraining]'s [recordedDuration] doc.
+        unawaited(_toggleTraining(recordedDuration: fullDuration));
         return;
       }
       if (mounted) setState(() => _countdownRemaining = next);
@@ -1085,7 +1262,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                           label: 'Recognition Time',
                           value: _recognitionTimeMs,
                           min: 50,
-                          max: 5000,
+                          max: 1500,
                           step: 1,
                           suffix: 'ms',
                           onChanged: (v) {
@@ -1314,20 +1491,38 @@ class _TrainingScreenState extends State<TrainingScreen>
                     ),
                   ),
                   const SizedBox(height: 16),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _isTraining ? Colors.red : Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
+                  if (_isTraining)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _TrainingActionButton(
+                            color: _isPaused ? Colors.green : Colors.red,
+                            label: _isPaused ? 'Resume' : 'Stop',
+                            onPressed: _isPaused
+                                ? _togglePause
+                                : _toggleTraining,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _TrainingActionButton(
+                            color: _isPaused ? Colors.red : Colors.orange,
+                            label: _isPaused ? 'Stop' : 'Pause',
+                            onPressed: _isPaused
+                                ? _toggleTraining
+                                : _togglePause,
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    _TrainingActionButton(
+                      color: Colors.green,
+                      label: 'Start',
+                      onPressed: _hasSelectedCharacters
+                          ? _toggleTraining
+                          : null,
                     ),
-                    onPressed: _isTraining || _hasSelectedCharacters
-                        ? _toggleTraining
-                        : null,
-                    child: Text(_isTraining ? 'Stop' : 'Start'),
-                  ),
                   // 2026-08-30: hidden now that Milestone 13's on-device
                   // debugging is done -- see lib/debug_log.dart's own
                   // note. Flip _showDebugLogPanel back on (logging itself
@@ -1343,6 +1538,38 @@ class _TrainingScreenState extends State<TrainingScreen>
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One of the main screen's Start/Stop/Pause/Resume buttons -- shared
+/// styling (color, size, shape) so the single full-width Start button and
+/// the side-by-side Stop+Pause / Resume+Stop pair all read as the same
+/// kind of control.
+class _TrainingActionButton extends StatelessWidget {
+  const _TrainingActionButton({
+    required this.color,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final Color color;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      style: FilledButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      onPressed: onPressed,
+      child: Text(label),
     );
   }
 }

@@ -1194,4 +1194,13 @@ The current recognition engine is `package:speech_to_text` running fully on-devi
 
 None of the above should be read as "the feature doesn't work" -- these are the boundaries of what's achievable with on-device, real-time speech recognition on a phone, refined against extensive real-world testing (Milestone 13's several rounds of on-device tuning, 2026-08-26 through 2026-08-28). If recognition suddenly gets *dramatically* worse than this (e.g. it stops responding at all for an entire session), that likely is a bug worth reporting, not one of these inherent limits.
 
+# 41. Pause / Resume
+
+Once a session is running, a Pause button appears on the main screen next to Stop. Tapping it holds the session in place rather than ending it:
+
+- The training engine, response listener, and audio session are torn down exactly the way Stop tears them down -- there is no attempt to freeze mid-character playback, since the pre-mix audio architecture (section 26) plays each character's Morse tone, recognition-time silence, and spoken answer as one continuous buffer with no safe point to suspend and later resume mid-buffer.
+- Unlike Stop, the session itself does not end: the active character set, an in-progress countdown Timer, and the elapsed-time display are all frozen in place rather than reset, and nothing is written to the Training Log or the problem-character store.
+- While paused, the main screen offers Resume (continue training, generating a fresh character rather than replaying the interrupted one) or Stop (end the session from here, exactly as tapping Stop while running would, including logging whatever time had actually elapsed before Pause was tapped).
+- Resuming rebuilds the session using whatever Character Speed, Recognition Time, Extra Gap, and Character Set/Focus values are current at the moment Resume is tapped -- the same "live while training" rule those controls already follow.
+
 # End of Specification

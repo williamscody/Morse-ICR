@@ -499,6 +499,85 @@ void main() {
     expect(chip.onSelected, isNotNull);
   });
 
+  testWidgets('tapping Pause replaces Stop+Pause with Resume+Stop, staying '
+      'mid-session', (tester) async {
+    await tester.pumpWidget(wrapTraining());
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+
+    expect(find.text('Stop'), findsOneWidget);
+    expect(find.text('Pause'), findsOneWidget);
+    expect(find.text('Resume'), findsNothing);
+
+    await tester.tap(find.text('Pause'));
+    await tester.pump();
+
+    expect(find.text('Resume'), findsOneWidget);
+    expect(find.text('Stop'), findsOneWidget);
+    expect(find.text('Pause'), findsNothing);
+    // Still mid-session -- "Training…" status and disabled character-set
+    // selection stay exactly as they were before Pause.
+    expect(find.text('Training…'), findsOneWidget);
+    final chip = tester.widget<FilterChip>(
+      find.widgetWithText(FilterChip, 'A-Z'),
+    );
+    expect(chip.onSelected, isNull);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+  });
+
+  testWidgets('Pause stops listening for a response, Resume starts it again', (
+    tester,
+  ) async {
+    final listener = _FakeResponseListener();
+    await tester.pumpWidget(wrapTraining(responseListener: listener));
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    expect(listener.startListeningCalls, ['start']);
+
+    await tester.tap(find.text('Pause'));
+    await tester.pump();
+    expect(listener.stopListeningCalls, ['stop']);
+
+    await tester.tap(find.text('Resume'));
+    await tester.pump();
+    expect(listener.startListeningCalls, ['start', 'start']);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+    expect(listener.stopListeningCalls, ['stop', 'stop']);
+  });
+
+  testWidgets('tapping Stop while paused ends the session and returns to '
+      'Idle', (tester) async {
+    await tester.pumpWidget(wrapTraining());
+
+    await tester.ensureVisible(find.text('Start'));
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await tester.tap(find.text('Pause'));
+    await tester.pump();
+    expect(find.text('Resume'), findsOneWidget);
+
+    await tester.tap(find.text('Stop'));
+    await tester.pump();
+
+    expect(find.text('Idle'), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
+    expect(find.text('Resume'), findsNothing);
+    expect(find.text('Pause'), findsNothing);
+
+    final chip = tester.widget<FilterChip>(
+      find.widgetWithText(FilterChip, 'A-Z'),
+    );
+    expect(chip.onSelected, isNotNull);
+  });
+
   testWidgets('starts and stops listening for the learner\'s spoken response '
       'alongside Start/Stop', (tester) async {
     final listener = _FakeResponseListener();
