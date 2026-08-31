@@ -15,7 +15,7 @@ Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android
 - Focus keyboard with per-character heat-map accuracy coloring and an all-time "X% Correct" summary
 - Three-memory countdown Timer that can auto-stop a session
 - Persistent Training Log with per-session notes, cumulative training time, and CSV export
-- Computer voice announcements (Voice), and on-device Speech Recognition that credits you for speaking the right answer in time
+- Computer voice announcements (Voice), and on-device Speech Recognition (experimental) that credits you for speaking the right answer in time
 - Configurable punctuation speaking ("." as Period/Dot, "/" as Slash/Stroke), Morse tone pitch/volume, and voice volume
 - Random or fixed character ordering
 - All settings persist across app restarts
@@ -61,11 +61,13 @@ The clock-with-arrow icon at the top left opens the Training Log: every complete
 
 Each entry can be given free-form notes. The log also shows your cumulative training time, and can be cleared or exported as a CSV file via the share sheet.
 
-### Voice & Speech Recognition
+### Voice & Speech Recognition (Experimental)
 
 Voice controls whether the computer speaks each character's answer out loud once your Recognition Time expires.
 
 Speech Recognition listens for you speaking the answer and credits you if it hears you say it in time. It requires headphones (wired or Bluetooth). If Speech Recognition is on and no headphones are connected, the app will ask you to connect them or turn the toggle off.
+
+Speech Recognition is an experimental feature. It relies on your device's on-board speech recognizer and voice-activity detection, both of which are inherently imperfect — expect occasional false credit for an answer you didn't actually say in time, occasional missed credit for one you did, and letters that sound alike (B/P, M/N, and similar pairs) being confused for each other. Background noise, microphone placement, and accent all affect accuracy, and behavior can vary between iOS and Android and between individual devices. See "Getting the Best Recognition Accuracy" below for ways to reduce these errors, but some baseline error rate is inherent to the technology and not fully eliminable through settings.
 
 ### Punctuation Speaking
 
@@ -88,6 +90,13 @@ When on (the default), characters are drawn randomly from the active set, with r
 - Faster settings (short Recognition Time, high Character Speed) leave less margin for error — an on-time answer can occasionally miss by a few tens of milliseconds. That's an inherent tradeoff of fast settings, not a defect.
 
 A few limits are inherent to any speech recognizer and not fixable through settings: some letters simply sound alike when spoken in isolation (B/P, M/N, and similar pairs), and a letter occasionally gets missed entirely rather than misheard. If recognition ever stops working entirely for a whole session, that is worth reporting — these smaller misses are not.
+
+### Voice Quality
+
+The computer's spoken voice comes from your device's own text-to-speech system, not from Morse ICR Trainer itself — so its clarity depends on which voice your device has installed and selected.
+
+- **iOS:** open Settings > Accessibility > Spoken Content > Voices > English, tap Samantha, then tap the ⓘ info button next to it and download the Enhanced (or Premium, if offered) quality. Morse ICR Trainer automatically speaks with the highest-quality English voice it finds installed, so there is nothing to select inside the app itself — once Samantha (Enhanced) finishes downloading, the app starts using it right away.
+- **Android:** open Settings > System > Languages & input > Text-to-speech output (the exact path varies a bit by device) and tap the gear icon next to the preferred engine, usually Google Text-to-speech Engine. Under Language, choose English (United States), then preview the available voices and pick the clearest one — favor a voice labeled Network over Local, since Network voices use higher-quality neural synthesis closer to Samantha (Enhanced)'s naturalness. Android has no single named voice equivalent to Samantha, and unlike iOS, Morse ICR Trainer does not pick a voice for you here — whichever voice you set as the system default is the one it speaks with.
 
 ---
 
