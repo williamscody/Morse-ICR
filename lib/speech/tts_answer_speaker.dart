@@ -202,7 +202,22 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
         '${resolvedDirectory.path}/${_fileNameFor(character, spokenText)}';
     final file = File(path);
     if (!await file.exists()) {
-      await _tts.synthesizeToFile(spokenText, path, true);
+      // AVSpeechSynthesizer.write() (what synthesizeToFile uses under
+      // the hood on iOS) has a known Apple bug where its buffer-callback
+      // loop never terminates for certain short utterances -- observed
+      // on-device for "/" ("slash"): it spins indefinitely without ever
+      // firing the didFinish delegate callback synthesizeToFile's future
+      // awaits, pegging the main thread until iOS's launch watchdog
+      // kills the whole app (blank white screen, then killed). stop()
+      // interrupts the underlying AVSpeechSynthesizer directly so the
+      // native spin doesn't keep burning CPU after Dart gives up on it.
+      await _tts.synthesizeToFile(spokenText, path, true).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          logDebug('prerender($character): synthesizeToFile timed out');
+          unawaited(_tts.stop());
+        },
+      );
     }
     if (await file.exists()) {
       final rendered = await file.readAsBytes();
