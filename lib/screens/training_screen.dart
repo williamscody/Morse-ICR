@@ -1311,7 +1311,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                           label: 'Recognition Time',
                           value: _recognitionTimeMs,
                           min: 50,
-                          max: 1500,
+                          max: 2500,
                           step: 1,
                           suffix: 'ms',
                           onChanged: (v) {
