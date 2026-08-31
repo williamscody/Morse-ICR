@@ -13,14 +13,14 @@ import 'screens/training_screen.dart';
 /// without hand-picking a dozen individual colors.
 const _seedColor = Color(0xFF00897B);
 
-/// Root widget for Morse ICR.
+/// Root widget for Morse ICR Trainer.
 class MorseIcrApp extends StatelessWidget {
   const MorseIcrApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Morse ICR',
+      title: 'Morse ICR Trainer',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: _seedColor),
         useMaterial3: true,

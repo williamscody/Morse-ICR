@@ -1262,7 +1262,11 @@ class _TrainingScreenState extends State<TrainingScreen>
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Morse ICR'),
+        title: const FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text('Morse ICR Trainer'),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.history),
           tooltip: 'Training Log',

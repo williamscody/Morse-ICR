@@ -42,7 +42,7 @@ final List<_HelpSection> _helpSections = [
     icon: Icons.flag_circle,
     color: Colors.blue,
     paragraphs: [
-      'Morse ICR plays a Morse code character, then gives you a short '
+      'Morse ICR Trainer plays a Morse code character, then gives you a short '
           'window to answer -- by speaking or simply knowing it -- before '
           'the computer\'s voice announces the character out loud. '
           'Answering correctly before the computer does is "beating the '
@@ -209,13 +209,13 @@ final List<_HelpSection> _helpSections = [
     color: Colors.cyan,
     paragraphs: [
       'The computer\'s spoken voice comes from your device\'s own '
-          'text-to-speech system, not from Morse ICR itself -- so its '
+          'text-to-speech system, not from Morse ICR Trainer itself -- so its '
           'clarity depends on which voice your device has installed and '
           'selected.',
       '- iOS: open Settings > Accessibility > Spoken Content > Voices > '
           'English, tap Samantha, then tap the ⓘ info button next to it '
           'and download the Enhanced (or Premium, if offered) quality. '
-          'Morse ICR automatically speaks with the highest-quality '
+          'Morse ICR Trainer automatically speaks with the highest-quality '
           'English voice it finds installed, so there is nothing to '
           'select inside the app itself -- once Samantha (Enhanced) '
           'finishes downloading, the app starts using it right away.',
@@ -228,7 +228,7 @@ final List<_HelpSection> _helpSections = [
           'since Network voices use higher-quality neural synthesis '
           'closer to Samantha (Enhanced)\'s naturalness. Android has no '
           'single named voice equivalent to Samantha, and unlike iOS, '
-          'Morse ICR does not pick a voice for you here -- whichever '
+          'Morse ICR Trainer does not pick a voice for you here -- whichever '
           'voice you set as the system default is the one it speaks '
           'with.',
     ],
@@ -238,10 +238,10 @@ final List<_HelpSection> _helpSections = [
     icon: Icons.volunteer_activism,
     color: Colors.deepPurple,
     paragraphs: [
-      'Morse ICR was inspired by the Instant Character Recognition '
+      'Morse ICR Trainer was inspired by the Instant Character Recognition '
           'training methodology taught by CW Innovations and by the '
           'Morse Code training resources available at Morse Code World.',
-      'Morse ICR is an independent application and is not affiliated '
+      'Morse ICR Trainer is an independent application and is not affiliated '
           'with or endorsed by CW Innovations or Morse Code World.',
     ],
     links: [
@@ -521,7 +521,7 @@ class _CoffeeLink extends StatelessWidget {
             child: Column(
               children: [
                 Text(
-                  '☕ Enjoying Morse ICR?',
+                  '☕ Enjoying Morse ICR Trainer?',
                   textAlign: TextAlign.center,
                   style: Theme.of(
                     context,

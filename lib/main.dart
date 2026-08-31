@@ -32,7 +32,7 @@ Future<void> main() async {
     trainingAudioHandler = await AudioService.init(
       builder: TrainingAudioHandler.new,
       config: const AudioServiceConfig(
-        androidNotificationChannelName: 'Morse ICR training',
+        androidNotificationChannelName: 'Morse ICR Trainer training',
         androidNotificationChannelDescription:
             'Shows while a training session is running or paused, with '
             'Play/Pause controls.',

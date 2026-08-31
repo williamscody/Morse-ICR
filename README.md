@@ -1,10 +1,10 @@
-# Morse ICR
+# Morse ICR Trainer
 
 Instant Character Recognition training for Morse Code.
 
-[☕ Support Morse ICR](https://buymeacoffee.com/codycabana)
+[☕ Support Morse ICR Trainer](https://buymeacoffee.com/codycabana)
 
-Morse ICR is a Flutter-based Morse code training app for iOS and Android, built around a "beat the computer" mechanic: the app plays a Morse code character, then gives you a short window to answer it — by speaking or simply recognizing it — before the app's own computer voice announces the character out loud for you. Answering correctly before the computer is "beating the computer," the app's core training loop.
+Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android, built around a "beat the computer" mechanic: the app plays a Morse code character, then gives you a short window to answer it — by speaking or simply recognizing it — before the app's own computer voice announces the character out loud for you. Answering correctly before the computer is "beating the computer," the app's core training loop.
 
 ## Features
 
@@ -27,7 +27,7 @@ The following is the content of the app's in-app Help page.
 
 ### Getting Started
 
-Morse ICR plays a Morse code character, then gives you a short window to answer — by speaking or simply knowing it — before the computer's voice announces the character out loud. Answering correctly before the computer does is "beating the computer," this app's core training mechanic.
+Morse ICR Trainer plays a Morse code character, then gives you a short window to answer — by speaking or simply knowing it — before the computer's voice announces the character out loud. Answering correctly before the computer does is "beating the computer," this app's core training mechanic.
 
 Tap Start on the main screen to begin a session. Tap Stop, or let an active Timer memory count down to zero, to end one.
 
@@ -97,16 +97,16 @@ Created by K3CDY, [Cody Cabana Productions, LLC](https://codycabanaproductions.c
 
 Acknowledgments
 
-Morse ICR was inspired by the Instant Character Recognition training methodology taught by CW Innovations and by the Morse Code training resources available at Morse Code World.
+Morse ICR Trainer was inspired by the Instant Character Recognition training methodology taught by CW Innovations and by the Morse Code training resources available at Morse Code World.
 
-Morse ICR is an independent application and is not affiliated with or endorsed by CW Innovations or Morse Code World.
+Morse ICR Trainer is an independent application and is not affiliated with or endorsed by CW Innovations or Morse Code World.
 
 CW Innovations — https://cwinnovations.net
 Morse Code World — https://morsecode.world
 
 ---
 
-☕ **Enjoying Morse ICR?**  
+☕ **Enjoying Morse ICR Trainer?**  
 If you find the app useful, consider [buying me a coffee](https://buymeacoffee.com/codycabana). It helps support continued development.
 
 ---

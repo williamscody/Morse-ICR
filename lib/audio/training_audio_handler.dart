@@ -16,7 +16,7 @@ TrainingAudioHandler? trainingAudioHandler;
 /// iOS history: an earlier version registered full Play/Stop remote
 /// controls and was found fighting `speech_to_text`'s own AVAudioSession
 /// category churn. This version asks for far less -- just enough that a
-/// "Morse ICR" card with a working Play/Pause toggle appears while a
+/// "Morse ICR Trainer" card with a working Play/Pause toggle appears while a
 /// session is running or paused, and tapping the card body (not the
 /// toggle) opens the app, which iOS provides automatically for any active
 /// Now Playing session. It never touches AVAudioSession itself (confirmed
@@ -47,7 +47,7 @@ TrainingAudioHandler? trainingAudioHandler;
 class TrainingAudioHandler extends BaseAudioHandler {
   static const _mediaItem = MediaItem(
     id: 'morse_icr_training',
-    title: 'Morse ICR',
+    title: 'Morse ICR Trainer',
     artist: 'Training in progress',
   );
 

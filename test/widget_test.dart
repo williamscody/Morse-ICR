@@ -12,6 +12,6 @@ void main() {
   ) async {
     await tester.pumpWidget(const MorseIcrApp());
 
-    expect(find.text('Morse ICR'), findsOneWidget);
+    expect(find.text('Morse ICR Trainer'), findsOneWidget);
   });
 }
