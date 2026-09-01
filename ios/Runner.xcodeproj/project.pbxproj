@@ -469,7 +469,7 @@
 				DEVELOPMENT_TEAM = 6BU7G9SE5E;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Morse ICR Trainer";
+				INFOPLIST_KEY_CFBundleDisplayName = "Morse ICR";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -655,7 +655,7 @@
 				DEVELOPMENT_TEAM = 6BU7G9SE5E;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Morse ICR Trainer";
+				INFOPLIST_KEY_CFBundleDisplayName = "Morse ICR";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -681,7 +681,7 @@
 				DEVELOPMENT_TEAM = 6BU7G9SE5E;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Morse ICR Trainer";
+				INFOPLIST_KEY_CFBundleDisplayName = "Morse ICR";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
