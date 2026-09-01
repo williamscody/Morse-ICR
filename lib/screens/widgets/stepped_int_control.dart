@@ -102,6 +102,12 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
     _focusNode.unfocus();
   }
 
+  // Shrinks a widget's Material tap-target padding a bit below Material's
+  // default 48x48 minimum -- still comfortably tappable, but keeps a
+  // 3-control card compact enough to fit one screen without scrolling
+  // (Bill, 2026-08-31).
+  static const _tightTapTarget = VisualDensity(horizontal: -2, vertical: -2);
+
   @override
   Widget build(BuildContext context) {
     final divisions = ((widget.max - widget.min) / widget.step).round();
@@ -112,79 +118,91 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
           '${widget.label}: ${widget.value} ${widget.suffix}',
           style: Theme.of(context).textTheme.titleMedium,
         ),
+        const SizedBox(height: 4),
         Row(
           children: [
             IconButton(
-              iconSize: 32,
+              visualDensity: _tightTapTarget,
+              iconSize: 26,
               icon: const Icon(Icons.remove_circle_outline),
               onPressed: widget.enabled
                   ? () => _setValue(widget.value - widget.step)
                   : null,
             ),
             Expanded(
-              child: Slider(
-                value: widget.value.clamp(widget.min, widget.max).toDouble(),
-                min: widget.min.toDouble(),
-                max: widget.max.toDouble(),
-                divisions: divisions,
-                label: '${widget.value} ${widget.suffix}',
-                onChanged: widget.enabled
-                    ? (v) => _setValue(v.round())
-                    : null,
+              child: SliderTheme(
+                data: SliderTheme.of(
+                  context,
+                ).copyWith(trackHeight: 3, padding: EdgeInsets.zero),
+                child: Slider(
+                  value: widget.value.clamp(widget.min, widget.max).toDouble(),
+                  min: widget.min.toDouble(),
+                  max: widget.max.toDouble(),
+                  divisions: divisions,
+                  label: '${widget.value} ${widget.suffix}',
+                  onChanged: widget.enabled
+                      ? (v) => _setValue(v.round())
+                      : null,
+                ),
               ),
             ),
             IconButton(
-              iconSize: 32,
+              visualDensity: _tightTapTarget,
+              iconSize: 26,
               icon: const Icon(Icons.add_circle_outline),
               onPressed: widget.enabled
                   ? () => _setValue(widget.value + widget.step)
                   : null,
             ),
-          ],
-        ),
-        AnimatedBuilder(
-          animation: _focusNode,
-          builder: (context, _) {
-            final isEditing = _focusNode.hasFocus;
-            return Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 160,
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    enabled: widget.enabled,
-                    textAlign: TextAlign.center,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                    ],
-                    decoration: InputDecoration(
-                      isDense: true,
-                      suffixText: widget.suffix,
-                      border: const OutlineInputBorder(),
-                    ),
-                    onSubmitted: (_) => _confirmEdit(),
-                  ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 60,
+              height: 36,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                enabled: widget.enabled,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  border: OutlineInputBorder(),
                 ),
-                if (isEditing) ...[
-                  IconButton(
-                    iconSize: 40,
-                    tooltip: 'Cancel',
-                    icon: const Icon(Icons.cancel, color: Colors.red),
-                    onPressed: _cancelEdit,
-                  ),
-                  IconButton(
-                    iconSize: 40,
-                    tooltip: 'Done',
-                    icon: const Icon(Icons.check_circle, color: Colors.green),
-                    onPressed: _confirmEdit,
-                  ),
-                ],
-              ],
-            );
-          },
+                onSubmitted: (_) => _confirmEdit(),
+              ),
+            ),
+            AnimatedBuilder(
+              animation: _focusNode,
+              builder: (context, _) {
+                if (!_focusNode.hasFocus) return const SizedBox.shrink();
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      visualDensity: _tightTapTarget,
+                      iconSize: 24,
+                      tooltip: 'Cancel',
+                      icon: const Icon(Icons.cancel, color: Colors.red),
+                      onPressed: _cancelEdit,
+                    ),
+                    IconButton(
+                      visualDensity: _tightTapTarget,
+                      iconSize: 24,
+                      tooltip: 'Done',
+                      icon: const Icon(
+                        Icons.check_circle,
+                        color: Colors.green,
+                      ),
+                      onPressed: _confirmEdit,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
         ),
       ],
     );

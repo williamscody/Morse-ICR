@@ -83,7 +83,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 16,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -94,17 +97,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         'Voice',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      Switch(
-                        value: _voiceEnabled,
-                        onChanged: (value) {
-                          setState(() => _voiceEnabled = value);
-                          widget.onVoiceChanged(value);
-                        },
+                      Transform.scale(
+                        scale: 0.8,
+                        child: Switch(
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          value: _voiceEnabled,
+                          onChanged: (value) {
+                            setState(() => _voiceEnabled = value);
+                            widget.onVoiceChanged(value);
+                          },
+                        ),
                       ),
                     ],
                   ),
                   if (widget.voicePreparing) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -121,7 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ],
                     ),
                   ],
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 18),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -129,12 +137,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         'Speech Recognition',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      Switch(
-                        value: _recognitionEnabled,
-                        onChanged: (value) {
-                          setState(() => _recognitionEnabled = value);
-                          widget.onRecognitionChanged(value);
-                        },
+                      Transform.scale(
+                        scale: 0.8,
+                        child: Switch(
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          value: _recognitionEnabled,
+                          onChanged: (value) {
+                            setState(() => _recognitionEnabled = value);
+                            widget.onRecognitionChanged(value);
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -151,43 +164,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: const Text('Personalize Recognition'),
                     ),
                   ],
-                  const SizedBox(height: 24),
-                  Text(
-                    'Speak "." as',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment(value: false, label: Text('Period')),
-                      ButtonSegment(value: true, label: Text('Dot')),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Speak "." as',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 6),
+                            SegmentedButton<bool>(
+                              showSelectedIcon: false,
+                              style: SegmentedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                              ),
+                              segments: const [
+                                ButtonSegment(
+                                  value: false,
+                                  label: Text('Period'),
+                                ),
+                                ButtonSegment(value: true, label: Text('Dot')),
+                              ],
+                              selected: {_speakPeriodAsDot},
+                              onSelectionChanged: (selection) {
+                                final value = selection.first;
+                                setState(() => _speakPeriodAsDot = value);
+                                widget.onSpeakPeriodAsDotChanged(value);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Speak "/" as',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 6),
+                            SegmentedButton<bool>(
+                              showSelectedIcon: false,
+                              style: SegmentedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                              ),
+                              segments: const [
+                                ButtonSegment(
+                                  value: false,
+                                  label: Text('Slash'),
+                                ),
+                                ButtonSegment(
+                                  value: true,
+                                  label: Text('Stroke'),
+                                ),
+                              ],
+                              selected: {_speakSlashAsStroke},
+                              onSelectionChanged: (selection) {
+                                final value = selection.first;
+                                setState(() => _speakSlashAsStroke = value);
+                                widget.onSpeakSlashAsStrokeChanged(value);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
-                    selected: {_speakPeriodAsDot},
-                    onSelectionChanged: (selection) {
-                      final value = selection.first;
-                      setState(() => _speakPeriodAsDot = value);
-                      widget.onSpeakPeriodAsDotChanged(value);
-                    },
                   ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Speak "/" as',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment(value: false, label: Text('Slash')),
-                      ButtonSegment(value: true, label: Text('Stroke')),
-                    ],
-                    selected: {_speakSlashAsStroke},
-                    onSelectionChanged: (selection) {
-                      final value = selection.first;
-                      setState(() => _speakSlashAsStroke = value);
-                      widget.onSpeakSlashAsStrokeChanged(value);
-                    },
-                  ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 18),
                   SteppedIntControl(
                     label: 'Morse Pitch',
                     value: _morsePitchHz,
@@ -200,7 +258,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       widget.onMorsePitchChanged(value);
                     },
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 14),
                   SteppedIntControl(
                     label: 'Morse Volume',
                     value: _morseVolumePercent,
@@ -213,7 +271,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       widget.onMorseVolumeChanged(value);
                     },
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 14),
                   SteppedIntControl(
                     label: 'Voice Volume',
                     value: _voiceVolumePercent,
@@ -226,7 +284,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       widget.onVoiceVolumeChanged(value);
                     },
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 18),
                   // Diagnostic toggle: off gives a repeatable, predictable
                   // character sequence instead of a random draw, so an
                   // accuracy issue under investigation can be isolated
@@ -238,12 +296,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         'Random Character Order',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
-                      Switch(
-                        value: _randomCharacterOrder,
-                        onChanged: (value) {
-                          setState(() => _randomCharacterOrder = value);
-                          widget.onRandomCharacterOrderChanged(value);
-                        },
+                      Transform.scale(
+                        scale: 0.8,
+                        child: Switch(
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          value: _randomCharacterOrder,
+                          onChanged: (value) {
+                            setState(() => _randomCharacterOrder = value);
+                            widget.onRandomCharacterOrderChanged(value);
+                          },
+                        ),
                       ),
                     ],
                   ),

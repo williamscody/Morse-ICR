@@ -1289,7 +1289,10 @@ class _TrainingScreenState extends State<TrainingScreen>
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 4,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1310,7 +1313,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                             _persistMainScreenSettings();
                           },
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 8),
                         SteppedIntControl(
                           label: 'Recognition Time',
                           value: _recognitionTimeMs,
@@ -1326,7 +1329,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                             _persistMainScreenSettings();
                           },
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 8),
                         SteppedIntControl(
                           label: 'Extra Gap',
                           value: _extraGapMs,
@@ -1345,7 +1348,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
                   _SectionCard(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1355,12 +1358,13 @@ class _TrainingScreenState extends State<TrainingScreen>
                       borderRadius: BorderRadius.circular(16),
                       onTap: _isTraining ? null : _openCountdownTimerSettings,
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Row(
                           children: [
                             Icon(
                               Icons.timer_outlined,
                               color: colorScheme.primary,
+                              size: 24,
                             ),
                             const SizedBox(width: 12),
                             Text(
@@ -1383,6 +1387,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                             const SizedBox(width: 4),
                             Icon(
                               Icons.chevron_right,
+                              size: 24,
                               color: _isTraining
                                   ? Theme.of(context).disabledColor
                                   : null,
@@ -1392,14 +1397,14 @@ class _TrainingScreenState extends State<TrainingScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
                   _SectionCard(
                     title: 'Character Set',
                     child: Column(
                       children: [
                         Wrap(
                           alignment: WrapAlignment.center,
-                          spacing: 8,
+                          spacing: 10,
                           runSpacing: 8,
                           children: [
                             // Word (whole-word recognition) is a future
@@ -1453,7 +1458,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                               ),
                           ],
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 8),
                         Center(
                           child: OutlinedButton(
                             // Matches the character-set FilterChips' own
@@ -1464,6 +1469,10 @@ class _TrainingScreenState extends State<TrainingScreen>
                             // consistency between the two character-set-
                             // selection controls on this screen.
                             style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
                               shape: const RoundedRectangleBorder(
                                 borderRadius: BorderRadius.all(
                                   Radius.circular(8),
@@ -1489,12 +1498,12 @@ class _TrainingScreenState extends State<TrainingScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 8),
                   Center(
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 6,
+                        horizontal: 18,
+                        vertical: 4,
                       ),
                       decoration: BoxDecoration(
                         color: _isTraining
@@ -1543,7 +1552,7 @@ class _TrainingScreenState extends State<TrainingScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 6),
                   if (_isTraining)
                     Row(
                       children: [
@@ -1616,7 +1625,7 @@ class _TrainingActionButton extends StatelessWidget {
       style: FilledButton.styleFrom(
         backgroundColor: color,
         foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(vertical: 16),
+        padding: const EdgeInsets.symmetric(vertical: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -1639,7 +1648,7 @@ class _TrainingActionButton extends StatelessWidget {
 class _SectionCard extends StatelessWidget {
   const _SectionCard({
     this.title,
-    this.padding = const EdgeInsets.all(16),
+    this.padding = const EdgeInsets.all(10),
     required this.child,
   });
 
@@ -1668,7 +1677,7 @@ class _SectionCard extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
             ],
             child,
           ],
