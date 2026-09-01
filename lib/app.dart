@@ -21,6 +21,7 @@ class MorseIcrApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Morse ICR Trainer',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: _seedColor),
         useMaterial3: true,
