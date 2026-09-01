@@ -108,6 +108,11 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
   // (Bill, 2026-08-31).
   static const _tightTapTarget = VisualDensity(horizontal: -2, vertical: -2);
 
+  // Breathing room between the slider and the +/- buttons, which also
+  // shortens the slider track at each end so fingers near the ends of the
+  // track don't land on a button.
+  static const _sliderGap = 20.0;
+
   @override
   Widget build(BuildContext context) {
     final divisions = ((widget.max - widget.min) / widget.step).round();
@@ -129,6 +134,7 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
                   ? () => _setValue(widget.value - widget.step)
                   : null,
             ),
+            const SizedBox(width: _sliderGap),
             Expanded(
               child: SliderTheme(
                 data: SliderTheme.of(
@@ -146,6 +152,7 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
                 ),
               ),
             ),
+            const SizedBox(width: _sliderGap),
             IconButton(
               visualDensity: _tightTapTarget,
               iconSize: 26,
@@ -155,21 +162,33 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
                   : null,
             ),
             const SizedBox(width: 6),
-            SizedBox(
+            Container(
               width: 60,
-              height: 36,
+              height: 45,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).colorScheme.outline),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              // The border is drawn by this Container rather than the
+              // TextField's own InputDecoration, and the decoration below
+              // is fully collapsed (no reserved label/helper space) --
+              // that way this Container's `alignment: Alignment.center`
+              // is the only thing controlling vertical position, instead
+              // of fighting InputDecorator's own padding math.
               child: TextField(
                 controller: _controller,
                 focusNode: _focusNode,
                 enabled: widget.enabled,
                 textAlign: TextAlign.center,
+                textAlignVertical: TextAlignVertical.center,
                 style: Theme.of(context).textTheme.bodyMedium,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(vertical: 8),
-                  border: OutlineInputBorder(),
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
                 ),
                 onSubmitted: (_) => _confirmEdit(),
               ),
@@ -183,14 +202,14 @@ class _SteppedIntControlState extends State<SteppedIntControl> {
                   children: [
                     IconButton(
                       visualDensity: _tightTapTarget,
-                      iconSize: 24,
+                      iconSize: 32,
                       tooltip: 'Cancel',
                       icon: const Icon(Icons.cancel, color: Colors.red),
                       onPressed: _cancelEdit,
                     ),
                     IconButton(
                       visualDensity: _tightTapTarget,
-                      iconSize: 24,
+                      iconSize: 32,
                       tooltip: 'Done',
                       icon: const Icon(
                         Icons.check_circle,
