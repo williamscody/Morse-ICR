@@ -13,6 +13,7 @@ Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android
 - Sub-millisecond Recognition Time accuracy
 - Character Set selection (A-Z, 0-9, punctuation), or a custom Focus practice list
 - Focus keyboard with per-character heat-map accuracy coloring and an all-time "X% Correct" summary
+- Focusizer slider that auto-builds a practice list from your worst- to best-performing characters
 - Three-memory countdown Timer that can auto-stop a session
 - Persistent Training Log with per-session notes, cumulative training time, and CSV export
 - Computer voice announcements (Voice), and on-device Speech Recognition (experimental) that credits you for speaking the right answer in time
@@ -48,6 +49,8 @@ The Character Set chips (A-Z, 0-9, Punct) choose which characters are trained. M
 The Focus button opens a full keyboard of every common Morse character. Tap characters on or off to build a custom practice list, then tap Done. A Focus list, once set, replaces the chips above entirely and stays active until you select a chip again or edit the Focus list. Clear removes every character from the list.
 
 On the Focus keyboard, each character is colored by your all-time performance with it: red means it's mostly been missed, green means mostly correct, with everything in between scaled against your best-performing character. A character with no color at all has never come up in a session yet.
+
+Below the character grid, the Focusizer slider builds a practice list for you automatically from those same scores. Drag it left to right to select your worst-performing characters first, adding progressively better-performing ones as you go further right; drag it all the way to the left to clear the selection. The red − and green + buttons next to the slider step it one character at a time, and the number next to "Focusizer" always shows how many characters are currently selected. Tapping a chip directly still overrides the slider for that one character.
 
 ### Timer
 

@@ -91,6 +91,16 @@ final List<_HelpSection> _helpSections = [
           'means mostly correct, with everything in between scaled '
           'against your best-performing character. A character with no '
           'color at all has never come up in a session yet.',
+      'Below the character grid, the Focusizer slider builds a practice '
+          'list for you automatically from those same scores. Drag it '
+          'left to right to select your worst-performing characters '
+          'first, adding progressively better-performing ones as you go '
+          'further right; drag it all the way to the left to clear the '
+          'selection. The red − and green + buttons next to the slider '
+          'step it one character at a time, and the number next to '
+          '"Focusizer" always shows how many characters are currently '
+          'selected. Tapping a chip directly still overrides the slider '
+          'for that one character.',
     ],
   ),
   _HelpSection(
@@ -331,12 +341,9 @@ class _HelpScreenState extends State<HelpScreen> {
                     Center(
                       child: Text(
                         'Version $appVersion',
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                     const _CreatedByLink(),
@@ -426,7 +433,9 @@ class _HelpSectionView extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
-              paragraph.startsWith('- ') ? '•  ${paragraph.substring(2)}' : paragraph,
+              paragraph.startsWith('- ')
+                  ? '•  ${paragraph.substring(2)}'
+                  : paragraph,
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),
@@ -473,8 +482,7 @@ class _CreatedByLink extends StatelessWidget {
 
   static final Uri _url = Uri.parse('https://codycabanaproductions.com');
 
-  Future<void> _open() =>
-      launchUrl(_url, mode: LaunchMode.externalApplication);
+  Future<void> _open() => launchUrl(_url, mode: LaunchMode.externalApplication);
 
   @override
   Widget build(BuildContext context) {
@@ -506,8 +514,7 @@ class _CoffeeLink extends StatelessWidget {
 
   static final Uri _url = Uri.parse('https://buymeacoffee.com/codycabana');
 
-  Future<void> _open() =>
-      launchUrl(_url, mode: LaunchMode.externalApplication);
+  Future<void> _open() => launchUrl(_url, mode: LaunchMode.externalApplication);
 
   @override
   Widget build(BuildContext context) {

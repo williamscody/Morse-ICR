@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/screens/problem_character_keyboard.dart';
+import 'package:morse_icr/training/character_set.dart';
 import 'package:morse_icr/training/problem_character_store.dart';
 
 class _FakeProblemCharacterStore implements ProblemCharacterStore {
@@ -59,6 +60,85 @@ final Color _heatMapGreen = _heatMapGreenHsv.toColor();
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
+
+  // A selected chip's highlight ring is a separate overlay keyed
+  // 'focus-highlight-<character>' (see ProblemCharacterKeyboard's own
+  // comment on why it's not FilterChip's own [side] any more), rather
+  // than something readable off the [FilterChip] itself.
+  bool isHighlighted(WidgetTester tester, String character) =>
+      find.byKey(Key('focus-highlight-$character')).evaluate().isNotEmpty;
+
+  testWidgets('chips are roughly 10% shorter than a stock FilterChip with this '
+      'label, with their width left unchanged', (tester) async {
+    await tester.pumpWidget(
+      wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore())),
+    );
+    await tester.pump();
+
+    final size = tester.getSize(find.widgetWithText(FilterChip, 'A'));
+    // A stock FilterChip with this two-line label (character + score)
+    // measures ~48.1 wide x 48.0 tall before the deliberate
+    // padding/materialTapTargetSize override in the widget (Bill,
+    // 2026-09-02: chips read too tall) -- this pins that override to
+    // roughly a 10% height cut (48.0 -> ~43.2) while leaving the width
+    // (driven by content plus horizontal-only padding, none of which
+    // changed) untouched.
+    expect(size.height, closeTo(43.2, 0.5));
+    expect(size.width, closeTo(48.1, 0.5));
+  });
+
+  testWidgets(
+    'selecting a chip never changes its own size, and selecting every '
+    'chip never changes the grids overall size -- regression: chips '
+    'used to reflow onto an extra row once a few were selected, and the '
+    'whole grid grew once every chip was selected, because the old '
+    'selection border grew the chips own layout box',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore())),
+      );
+      await tester.pump();
+
+      final chipSizeBefore = tester.getSize(
+        find.widgetWithText(FilterChip, 'A'),
+      );
+      final gridSizeBefore = tester.getSize(find.byType(Wrap));
+
+      for (final character in allCharacters) {
+        await tester.tap(
+          find.widgetWithText(FilterChip, character),
+          warnIfMissed: false,
+        );
+      }
+      await tester.pump();
+
+      // Every character is now selected.
+      final chips = tester.widgetList<FilterChip>(find.byType(FilterChip));
+      expect(chips.every((chip) => chip.selected), isTrue);
+
+      expect(
+        tester.getSize(find.widgetWithText(FilterChip, 'A')),
+        chipSizeBefore,
+      );
+      expect(tester.getSize(find.byType(Wrap)), gridSizeBefore);
+    },
+  );
+
+  testWidgets("a selected chip's highlight ring exactly matches the chip's own "
+      'outer size -- regression: an earlier version inset the ring by '
+      "half the border width (reasoning from BorderSide's centered-stroke "
+      "behavior, which doesn't apply to a plain Border), leaving the "
+      'highlight visibly smaller than the chip', (tester) async {
+    await tester.pumpWidget(
+      wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore(['A']))),
+    );
+    await tester.pump();
+
+    expect(
+      tester.getSize(find.byKey(const Key('focus-highlight-A'))),
+      tester.getSize(find.widgetWithText(FilterChip, 'A')),
+    );
+  });
 
   testWidgets('shows every letter, digit, and the minimum punctuation set, '
       'none selected, when nothing was previously saved', (tester) async {
@@ -215,10 +295,12 @@ void main() {
     await tester.pumpWidget(
       wrap(
         ProblemCharacterKeyboard(
-          store: _FakeProblemCharacterStore(null, const {}, {
-            'K': 8,
-            'F': 2,
-          }, {'K': 10, 'F': 10}),
+          store: _FakeProblemCharacterStore(
+            null,
+            const {},
+            {'K': 8, 'F': 2},
+            {'K': 10, 'F': 10},
+          ),
         ),
       ),
     );
@@ -242,9 +324,12 @@ void main() {
     'Clear hides the "Correct" summary immediately, and Done commits that '
     'reset',
     (tester) async {
-      final store = _FakeProblemCharacterStore(null, const {}, {
-        'K': 5,
-      }, {'K': 5});
+      final store = _FakeProblemCharacterStore(
+        null,
+        const {},
+        {'K': 5},
+        {'K': 5},
+      );
       await tester.pumpWidget(wrap(ProblemCharacterKeyboard(store: store)));
       await tester.pump();
       expect(find.text('100% Correct'), findsOneWidget);
@@ -275,10 +360,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(
-      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-      isNull,
-    );
+    expect(isHighlighted(tester, 'K'), isFalse);
     expect(
       tester
           .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
@@ -288,10 +370,19 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilterChip, 'K'));
     await tester.pump();
-    expect(
-      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-      isNotNull,
+    expect(isHighlighted(tester, 'K'), isTrue);
+    // A fixed, vivid color/width (2026-09-02) -- not the theme's own
+    // primary -- so the selection highlight reads clearly against any
+    // heat-map fill in both light and dark mode.
+    final decoratedBox = tester.widget<DecoratedBox>(
+      find.descendant(
+        of: find.byKey(const Key('focus-highlight-K')),
+        matching: find.byType(DecoratedBox),
+      ),
     );
+    final border = (decoratedBox.decoration as BoxDecoration).border as Border;
+    expect(border.top.color, Colors.cyanAccent);
+    expect(border.top.width, 4.0);
     expect(
       tester
           .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
@@ -301,10 +392,7 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilterChip, 'K'));
     await tester.pump();
-    expect(
-      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-      isNull,
-    );
+    expect(isHighlighted(tester, 'K'), isFalse);
     expect(
       tester
           .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
@@ -332,10 +420,7 @@ void main() {
       // screen (`saved: ['K']`) -- a *later* training session having
       // since flagged it too (`savedAutoFlagged: {'K'}`, e.g. it started
       // being missed again) doesn't take that selection away.
-      expect(
-        tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-        isNotNull,
-      );
+      expect(isHighlighted(tester, 'K'), isTrue);
       expect(
         tester
             .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
@@ -349,10 +434,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.widgetWithText(FilterChip, 'K'));
       await tester.pump();
-      expect(
-        tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-        isNotNull,
-      );
+      expect(isHighlighted(tester, 'K'), isTrue);
     },
   );
 
@@ -370,10 +452,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(
-        tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-        isNull,
-      );
+      expect(isHighlighted(tester, 'K'), isFalse);
       expect(
         tester
             .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
@@ -381,7 +460,7 @@ void main() {
         isFalse,
       );
 
-      // One tap selects and borders it -- not two.
+      // One tap selects and highlights it -- not two.
       await tester.tap(find.widgetWithText(FilterChip, 'K'));
       await tester.pump();
       expect(
@@ -390,10 +469,7 @@ void main() {
             .selected,
         isTrue,
       );
-      expect(
-        tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-        isNotNull,
-      );
+      expect(isHighlighted(tester, 'K'), isTrue);
     },
   );
 
@@ -494,12 +570,9 @@ void main() {
       await tester.tap(find.text('Clear'));
       await tester.pump();
 
-      // K was selected (so bordered); Clear deselects it, removing the
-      // border along with the selection.
-      expect(
-        tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).side,
-        isNull,
-      );
+      // K was selected (so highlighted); Clear deselects it, removing the
+      // highlight along with the selection.
+      expect(isHighlighted(tester, 'K'), isFalse);
       expect(store.savedAutoFlagged, {'K'});
     },
   );
@@ -661,5 +734,238 @@ void main() {
     expect(pushReturned, isTrue);
     expect(result, isNull);
     expect(store.saved, ['K']);
+  });
+
+  testWidgets('titles the AppBar "Focus" and shows an italic "Focusizer N" '
+      'label -- N being the current selection count -- with red-/green+ '
+      'buttons on its slider', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ProblemCharacterKeyboard(
+          store: _FakeProblemCharacterStore(['K', 'R'], const {}, {'K': 5}),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.widgetWithText(AppBar, 'Focus'), findsOneWidget);
+    final label = tester.widget<Text>(find.text('Focusizer 2'));
+    expect(label.style?.fontStyle, FontStyle.italic);
+    expect(find.byIcon(Icons.remove_circle_outline), findsOneWidget);
+    expect(find.byIcon(Icons.add_circle_outline), findsOneWidget);
+
+    // The count tracks selection changes, both manual...
+    await tester.tap(find.widgetWithText(FilterChip, 'F'));
+    await tester.pump();
+    expect(find.text('Focusizer 3'), findsOneWidget);
+
+    // ...and slider-driven.
+    tester.widget<Slider>(find.byType(Slider)).onChanged!(0);
+    await tester.pump();
+    expect(find.text('Focusizer 0'), findsOneWidget);
+  });
+
+  testWidgets(
+    'the Focusizer slider and its -/+ buttons are disabled when nothing '
+    'has been scored yet',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore())),
+      );
+      await tester.pump();
+
+      expect(tester.widget<Slider>(find.byType(Slider)).onChanged, isNull);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.ancestor(
+                of: find.byIcon(Icons.remove_circle_outline),
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<IconButton>(
+              find.ancestor(
+                of: find.byIcon(Icons.add_circle_outline),
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed,
+        isNull,
+      );
+    },
+  );
+
+  testWidgets(
+    'the - and + buttons step the Focusizer slider by one worst-scoring '
+    'character at a time',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ProblemCharacterKeyboard(
+            store: _FakeProblemCharacterStore(null, const {}, {'F': 0, 'K': 5}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'F'))
+            .selected,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
+            .selected,
+        isFalse,
+      );
+
+      await tester.tap(find.byIcon(Icons.add_circle_outline));
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
+            .selected,
+        isTrue,
+      );
+
+      await tester.tap(find.byIcon(Icons.remove_circle_outline));
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
+            .selected,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'F'))
+            .selected,
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'dragging the Focusizer slider to its leftmost value selects nothing, '
+    'even overriding a previously-saved selection',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ProblemCharacterKeyboard(
+            store: _FakeProblemCharacterStore(['K'], const {}, {'K': 5}),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
+            .selected,
+        isTrue,
+      );
+
+      tester.widget<Slider>(find.byType(Slider)).onChanged!(0);
+      await tester.pump();
+
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, 'K'))
+            .selected,
+        isFalse,
+      );
+    },
+  );
+
+  testWidgets('the Focusizer slider selects characters worst-score-first as it '
+      'moves right, tie-breaking equal scores by allCharacters order, and '
+      'never auto-selects a character with no recorded score', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ProblemCharacterKeyboard(
+          store: _FakeProblemCharacterStore(null, const {}, {
+            'R': 0,
+            'F': 0,
+            'K': 5,
+          }),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChanged!(1);
+    await tester.pump();
+    // F sorts before R in allCharacters, so at value 1 (worst-of-1) F
+    // is the tie-break winner between the two 0-scored characters.
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'F')).selected,
+      isTrue,
+    );
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'R')).selected,
+      isFalse,
+    );
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).selected,
+      isFalse,
+    );
+
+    slider.onChanged!(3);
+    await tester.pump();
+    for (final character in ['F', 'R', 'K']) {
+      expect(
+        tester
+            .widget<FilterChip>(find.widgetWithText(FilterChip, character))
+            .selected,
+        isTrue,
+      );
+    }
+    // Never trained at all -- no score to rank by, so a tap is the
+    // only way to select it, even at the slider's rightmost value.
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'A')).selected,
+      isFalse,
+    );
+  });
+
+  testWidgets('a manual tap after moving the Focusizer slider overrides its '
+      'selection until the slider moves again', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        ProblemCharacterKeyboard(
+          store: _FakeProblemCharacterStore(null, const {}, {'F': 0, 'K': 5}),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChanged!(1); // selects F only
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilterChip, 'K'));
+    await tester.pump();
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).selected,
+      isTrue,
+    );
+
+    // Moving the slider again recomputes selection from scratch,
+    // discarding the manual override.
+    slider.onChanged!(1);
+    await tester.pump();
+    expect(
+      tester.widget<FilterChip>(find.widgetWithText(FilterChip, 'K')).selected,
+      isFalse,
+    );
   });
 }

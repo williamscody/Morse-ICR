@@ -74,6 +74,13 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   // the chips themselves.
   Map<String, int> _attempts = {};
   bool _loaded = false;
+  // Position of the Focusizer slider, 0 to [_rankedByScore]'s length --
+  // purely transient UI state, reset to 0 (leftmost, per its own doc
+  // comment) every time this screen opens rather than persisted, since
+  // the intended flow is "open Focus fresh after a session, then drag
+  // left-to-right." Only [_onFocusSliderChanged] ever touches [_selected]
+  // because of this value; it plays no other part in what's selected.
+  double _focusSliderValue = 0;
 
   @override
   void initState() {
@@ -132,6 +139,61 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
     Navigator.of(context).pop(characters);
   }
 
+  // Every character with a recorded score ([_scores]' keys -- see that
+  // field's own doc comment for why absence means "never trained"),
+  // worst-scoring first. This is the order the Focusizer slider fills
+  // selection in as it moves left to right (see
+  // [_onFocusSliderChanged]) -- a character that's never been trained
+  // has no score to rank by, so it never gets selected by the slider,
+  // only by a direct tap. Ties break on [allCharacters]' own order (not
+  // sort stability, which Dart's [List.sort] doesn't guarantee) so the
+  // ranking -- and therefore what the slider selects at a given value --
+  // stays deterministic across rebuilds.
+  List<String> get _rankedByScore {
+    final ranked = [
+      for (final character in allCharacters)
+        if (_scores.containsKey(character)) character,
+    ];
+    ranked.sort((a, b) {
+      final scoreCompare = _scores[a]!.compareTo(_scores[b]!);
+      if (scoreCompare != 0) return scoreCompare;
+      return allCharacters.indexOf(a).compareTo(allCharacters.indexOf(b));
+    });
+    return ranked;
+  }
+
+  // Recomputes [_selected] from scratch as the worst-scoring
+  // [value.round()] characters in [_rankedByScore] -- not a merge with
+  // whatever was selected before, so dragging all the way left really
+  // does select nothing (per [_focusSliderValue]'s doc comment), even if
+  // some characters were manually selected or pre-populated from a prior
+  // save. A direct chip tap after this still works exactly as before
+  // ([onSelected] below) and is not overwritten again unless the slider
+  // itself moves.
+  void _onFocusSliderChanged(double value) {
+    final ranked = _rankedByScore;
+    final count = value.round().clamp(0, ranked.length);
+    setState(() {
+      _focusSliderValue = value;
+      _selected
+        ..clear()
+        ..addAll(ranked.take(count));
+    });
+  }
+
+  // Backs the Focusizer's -/+ buttons (2026-09-02, replacing the earlier
+  // Bad/Good sentiment icons to match [SteppedIntControl]'s own +/-
+  // step pattern elsewhere in the app) -- one step at a time through
+  // [_onFocusSliderChanged], same clamping and recompute-from-scratch
+  // behavior as dragging the slider itself.
+  void _stepFocusSlider(int delta) {
+    final newValue = (_focusSliderValue.round() + delta).clamp(
+      0,
+      _rankedByScore.length,
+    );
+    _onFocusSliderChanged(newValue.toDouble());
+  }
+
   void _clear() {
     setState(() {
       _selected.clear();
@@ -156,15 +218,7 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // Default AppBar title is single-line-ellipsis; taller toolbar
-        // plus an explicit line count gives "Focus Characters" room to
-        // wrap instead of truncating to "Focus C..." (Bill, on-device).
-        toolbarHeight: 72,
-        title: const Text(
-          'Focus\nCharacters',
-          maxLines: 2,
-          overflow: TextOverflow.visible,
-        ),
+        title: const Text('Focus'),
         actions: [
           TextButton(
             onPressed: _loaded ? _clear : null,
@@ -184,7 +238,12 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              // Less padding above the chips than to the sides/below --
+              // with the chips now the first thing in the column (the
+              // Focusizer moved below them, 2026-09-01), the old uniform
+              // 24 on every side left the whole screen sitting noticeably
+              // lower than it needed to (Bill, on-device).
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
               child: _loaded
                   ? Column(
                       mainAxisSize: MainAxisSize.min,
@@ -215,7 +274,7 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                       ? _heatMapColor(score, _maxScore)
                                       : Colors.transparent;
                                   final textColor = _readableTextColor(color);
-                                  return FilterChip(
+                                  final chip = FilterChip(
                                     label: Column(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -245,6 +304,28 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                       ],
                                     ),
                                     showCheckmark: false,
+                                    // Trims the chip's own default vertical
+                                    // padding (7 a side) down to 5.6 a
+                                    // side -- 8 horizontal is the
+                                    // (unchanged) default, kept explicit
+                                    // only because [padding] is one
+                                    // EdgeInsets -- for a precise 10%
+                                    // reduction in overall chip height
+                                    // (48 -> 43.2 logical pixels, measured
+                                    // via [tester.getSize] on an 'A' chip)
+                                    // with the width untouched (Bill,
+                                    // 2026-09-02). [shrinkWrap] is required
+                                    // alongside it: Material's default tap
+                                    // target enforces a 48-tall minimum
+                                    // that would otherwise silently
+                                    // re-inflate the chip back to its old
+                                    // height regardless of this padding.
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 5.6,
+                                    ),
                                     backgroundColor: color,
                                     selectedColor: color,
                                     selected: isSelected,
@@ -253,16 +334,9 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                     // a character by itself (see [_selected]'s
                                     // doc comment) -- [isSelected] here is
                                     // only ever true for one the learner
-                                    // actually tapped, so the border stays
-                                    // exactly "you picked this."
-                                    side: isSelected
-                                        ? BorderSide(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.primary,
-                                            width: 2.5,
-                                          )
-                                        : null,
+                                    // actually tapped, so the highlight
+                                    // below stays exactly "you picked
+                                    // this."
                                     onSelected: (selected) {
                                       setState(() {
                                         if (selected) {
@@ -274,21 +348,162 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                       });
                                     },
                                   );
+                                  if (!isSelected) return chip;
+                                  // A selected chip's highlight is painted
+                                  // as a separate overlay exactly matching
+                                  // the chip's own bounds, rather than
+                                  // through [FilterChip.side] (2026-09-02)
+                                  // -- [side] draws its stroke centered on
+                                  // the chip's own shape boundary, which
+                                  // grows the chip's actual layout box by
+                                  // the border width. With enough chips
+                                  // selected at once that growth pushed
+                                  // the [Wrap] into an extra row (Bill,
+                                  // on-device: "three chips selected and
+                                  // they start wrapping"), and inflated
+                                  // the whole grid's size once every chip
+                                  // was selected. This overlay instead
+                                  // fills exactly the unselected chip's
+                                  // own bounds ([Positioned.fill] inside a
+                                  // [Stack] whose size comes only from the
+                                  // non-positioned [chip] below it) --
+                                  // purely painted, so it can never change
+                                  // layout. No inset is added around the
+                                  // [DecoratedBox]: unlike [BorderSide],
+                                  // [Border.paint] draws each side flush
+                                  // with its own box's edge and extends
+                                  // inward by the stroke width, so the
+                                  // highlight's outer edge lands exactly
+                                  // on the chip's outer edge with no
+                                  // manual half-width compensation needed
+                                  // (Bill, on-device, 2026-09-02: an
+                                  // earlier version that did add that inset
+                                  // -- reasoning from [BorderSide]'s
+                                  // centered-stroke behavior -- left the
+                                  // highlight visibly smaller than the
+                                  // chip). [IgnorePointer] passes taps
+                                  // through to the chip beneath so tapping
+                                  // the highlighted ring still (de)selects
+                                  // it.
+                                  return Stack(
+                                    children: [
+                                      chip,
+                                      Positioned.fill(
+                                        key: Key('focus-highlight-$character'),
+                                        child: IgnorePointer(
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              border: Border.all(
+                                                color: _selectedBorderColor,
+                                                width: _selectedBorderWidth,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  );
                                 },
                               ),
                           ],
                         ),
-                        // Directly under the chip grid rather than
-                        // detached at the physical bottom of the screen
-                        // (e.g. via `bottomNavigationBar`) -- Bill found
-                        // the detached placement read as floating in the
-                        // middle of the screen whenever the grid didn't
-                        // fill the available height, since [Center]
-                        // above vertically centers this whole column
-                        // (2026-08-31). Hidden until there's at least one
-                        // recorded attempt (see [_correctPercentage]).
+                        const SizedBox(height: 24),
+                        Text(
+                          'Focusizer ${_selected.length}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontStyle: FontStyle.italic,
+                            fontSize: 12,
+                          ),
+                        ),
+                        // Shrinks the slider's default touch-target
+                        // overlay/thumb, and its own reserved top/bottom
+                        // padding (`padding: EdgeInsets.zero`, matching
+                        // [SteppedIntControl]'s identical slider elsewhere
+                        // in the app), so the visible track sits right
+                        // under the label above instead of leaving a gap
+                        // (Bill, on-device, 2026-09-01/02) -- a stock
+                        // [Slider] reserves extra invisible padding around
+                        // its track for the thumb's tap/ripple area.
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 3,
+                            padding: EdgeInsets.zero,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 8,
+                            ),
+                            overlayShape: SliderComponentShape.noOverlay,
+                          ),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                visualDensity: const VisualDensity(
+                                  horizontal: -2,
+                                  vertical: -2,
+                                ),
+                                iconSize: 26,
+                                icon: Icon(
+                                  Icons.remove_circle_outline,
+                                  color: _heatMapRedColor,
+                                ),
+                                onPressed: _rankedByScore.isEmpty
+                                    ? null
+                                    : () => _stepFocusSlider(-1),
+                              ),
+                              Expanded(
+                                child: Slider(
+                                  value: _focusSliderValue.clamp(
+                                    0,
+                                    _rankedByScore.length.toDouble(),
+                                  ),
+                                  min: 0,
+                                  // A max/divisions of 0 (nothing trained
+                                  // yet, see [_rankedByScore]) would be a
+                                  // degenerate, unusable [Slider] -- fall
+                                  // back to a disabled 0-to-1 slider
+                                  // rather than dividing by zero.
+                                  max: _rankedByScore.isEmpty
+                                      ? 1
+                                      : _rankedByScore.length.toDouble(),
+                                  divisions: _rankedByScore.isEmpty
+                                      ? null
+                                      : _rankedByScore.length,
+                                  onChanged: _rankedByScore.isEmpty
+                                      ? null
+                                      : _onFocusSliderChanged,
+                                ),
+                              ),
+                              IconButton(
+                                visualDensity: const VisualDensity(
+                                  horizontal: -2,
+                                  vertical: -2,
+                                ),
+                                iconSize: 26,
+                                icon: Icon(
+                                  Icons.add_circle_outline,
+                                  color: _heatMapGreenColor,
+                                ),
+                                onPressed: _rankedByScore.isEmpty
+                                    ? null
+                                    : () => _stepFocusSlider(1),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // In-column, directly under the Focusizer, rather
+                        // than detached at the physical bottom of the
+                        // screen (e.g. via `bottomNavigationBar`) -- Bill
+                        // found the detached placement read as floating
+                        // in the middle of the screen whenever the
+                        // content above didn't fill the available height,
+                        // since [Center] above vertically centers this
+                        // whole column (2026-08-31). Hidden until there's
+                        // at least one recorded attempt (see
+                        // [_correctPercentage]).
                         if (_correctPercentage != null) ...[
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 4),
                           Text(
                             '$_correctPercentage% Correct',
                             style: Theme.of(context).textTheme.titleMedium
@@ -350,12 +565,29 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   // "colors appear too dull" (2026-08-30). A hue sweep at full
   // saturation/value stays vivid across the whole range.
   Color _heatMapColor(int score, int maxScore) {
-    const heatMapRed = HSVColor.fromAHSV(1, 0, 1, 1);
-    const heatMapGreen = HSVColor.fromAHSV(1, 120, 1, 0.85);
-    if (maxScore == 0) return heatMapRed.toColor();
+    if (maxScore == 0) return _heatMapRedColor;
     final t = (score / maxScore).clamp(0.0, 1.0);
-    return HSVColor.lerp(heatMapRed, heatMapGreen, t)!.toColor();
+    return HSVColor.lerp(_heatMapRedHsv, _heatMapGreenHsv, t)!.toColor();
   }
+
+  // Backing values for [_heatMapColor] plus the Focusizer slider's own
+  // Bad/Good end icons (2026-09-01) -- shared so the icons read as
+  // exactly the same red/green the chips themselves use.
+  static const _heatMapRedHsv = HSVColor.fromAHSV(1, 0, 1, 1);
+  static const _heatMapGreenHsv = HSVColor.fromAHSV(1, 120, 1, 0.85);
+  static final Color _heatMapRedColor = _heatMapRedHsv.toColor();
+  static final Color _heatMapGreenColor = _heatMapGreenHsv.toColor();
+
+  // A selected chip's border -- fixed rather than [ColorScheme.primary]
+  // (2026-09-02: the app's teal primary read too close to the heat map's
+  // own green end, and too dim generally, to reliably stand out in
+  // either light or dark mode, Bill on-device). Cyan is red's direct
+  // hue-wheel opposite (180 deg from red's 0, versus green's 120) --
+  // pink, tried first, still read too close to red for Bill on-device --
+  // so it stays legible against any chip color; a bit thicker than the
+  // old 2.5 for the same reason.
+  static const _selectedBorderColor = Colors.cyanAccent;
+  static const _selectedBorderWidth = 4.0;
 
   // Keeps the character and its score legible against any heat-map
   // color the chip lands on -- null (the chip's own default label color)
