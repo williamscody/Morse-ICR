@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/training_screen.dart';
+import 'widgets/tablet_scaler.dart';
 
 /// A rich teal seed -- evokes a waveform/signal-scope glow appropriate
 /// to an audio-training app, and sits far enough from the Start/Stop
@@ -37,6 +38,7 @@ class MorseIcrApp extends StatelessWidget {
       // dark mode -- previously hardcoded, which meant a learner with
       // Light mode selected system-wide never saw it reflected here.
       themeMode: ThemeMode.system,
+      builder: (context, child) => TabletScaler(child: child!),
       home: const TrainingScreen(),
     );
   }

@@ -1240,4 +1240,31 @@ Confirmed on-device (`dumpsys activity services`): once a session has ever start
 - Real Doze/App Standby and OEM-specific battery-optimization behavior (Samsung, Xiaomi, OnePlus, and similar are notably more aggressive than stock Android or the emulator) over a realistic (many-minutes) locked session, not just the ~30s window verified on the emulator.
 - Whether Speech Recognition continues working while locked. Per this feature's own scope, this was never a primary requirement -- Speech Recognition is explicitly experimental (section 40), and no microphone-specific foreground-service type (`FOREGROUND_SERVICE_MICROPHONE`) was added speculatively. If recognition stops working while locked on a real device, that's an acceptable, known limitation, not a regression to chase.
 
+# 43. Tablet Layout Scaling
+
+Every screen in this app is laid out for a fixed phone-width column (the training screen's own body, for instance, is capped at `maxWidth: 480` and centered -- section-numbered screens elsewhere in this spec don't redefine that). On an iPad or Android tablet, that column would otherwise render at true phone size, floating in a sea of blank space rather than using the larger screen. Rather than rewriting every screen's layout to be tablet-aware, a single wrapper widget scales the whole rendered app up to fill the extra space, so no per-screen code needs its own idea of what a tablet is.
+
+## How it works
+
+`TabletScaler` (`lib/widgets/tablet_scaler.dart`) is wired into `MaterialApp.builder` in `lib/app.dart`, so it wraps every route -- including dialogs and snackbars, which live in the same Navigator subtree.
+
+On any screen whose shortest side is below 600 logical px (Material's own phone/tablet breakpoint), it's a complete no-op -- phone behavior is untouched. At or above that breakpoint, it:
+
+1. Computes a scale factor: `min(width / 390, height / 844)`, clamped to `[1.0, 2.0]`. 390x844 is a standard phone-portrait canvas (roughly iPhone-class logical points) -- the canvas every screen was actually designed against. Taking the *smaller* of the two axis ratios (rather than, say, width alone) guarantees the synthetic canvas descendants lay out against is never shorter than a real phone in either dimension, whatever a given tablet's aspect ratio -- nothing ends up more cramped than it already is on a phone. The clamp keeps a "tablet" right at the breakpoint from shrinking below 1x, and a huge display from blowing up past 2x.
+2. Gives descendants a shrunk `MediaQueryData` (size, padding, viewPadding, viewInsets all divided by the scale factor) -- so the whole widget tree, including `SafeArea`, lays out exactly as if it were on a phone of that synthetic size.
+3. Renders that phone-sized layout into a `FittedBox(fit: BoxFit.fill, alignment: topLeft)` wrapping a `SizedBox` fixed to the synthetic size -- which stretches the rendered result to fill the tablet's real screen.
+
+Step 3 originally used `Transform.scale` instead of `FittedBox`, which does the same visual job but is paint-only and doesn't relax layout constraints. On Android specifically (not reproduced on iOS/iPad simulators), the ambient constraints coming down from `MaterialApp.builder`'s parent were tight, so `BoxConstraints.enforce` silently clamped the `SizedBox`'s smaller requested size back up to the full physical size -- and `Transform.scale` then scaled that already-full-size content up *again*, overflowing past the right/bottom edge. `FittedBox`'s render object always gives its child loose/unconstrained layout first regardless of ambient tightness, which is what actually fixed it. Confirmed clean afterward on a Pixel Tablet (Android) emulator in both orientations and re-confirmed no regression on iPad Pro 13"/iPad mini simulators.
+
+## Android 16 ignores the portrait lock on large screens
+
+This app has always locked itself to portrait -- `AndroidManifest.xml`'s `android:screenOrientation="portrait"` and `main.dart`'s `SystemChrome.setPreferredOrientations([portraitUp, portraitDown])`. That's still fully honored on phones, and on iOS tablets (there's no equivalent override there). But on an Android tablet running API 36 ("Baklava") or higher, the OS *ignores* a fixed-orientation lock on any display with smallest width >= 600dp and instead runs the app in whatever orientation the device physically is in -- this is documented, intentional Android platform policy (not fixable by trying harder in this app's own code), and it gets stricter still in the next Android release rather than being reconsidered.
+
+A temporary manifest opt-out exists (`android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY`), but it was deliberately not added here: it restores old-style letterboxing -- a small phone-sized window centered on the tablet screen with blank bars on the sides -- which is the exact "small phone UI on a big tablet screen" complaint this feature exists to fix, just relabeled. Instead, the app lets the tablet rotate freely and leans on `TabletScaler` plus the existing `Center`/`ConstrainedBox` layout to handle whatever orientation the OS actually hands it:
+
+- **Portrait:** the full adaptive scale-up applies, matching the iPad experience.
+- **Landscape:** a portrait-designed column can't be scaled up without exceeding the shorter landscape height, so `TabletScaler`'s scale factor naturally computes to 1.0 (bound by the height ratio) and the existing `Center` widget renders the phone-width column centered with generous side margins instead -- correctly laid out and non-clipped, just not blown up.
+
+Net effect: an Android tablet held in portrait gets the full scaled-up experience; held in landscape it gets a centered, unscaled phone-width column. That's a reasonable, honest degradation given the underlying platform constraint, not a bug to keep chasing.
+
 # End of Specification

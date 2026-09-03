@@ -19,6 +19,7 @@ Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android
 - Computer voice announcements (Voice), and on-device Speech Recognition (experimental) that credits you for speaking the right answer in time
 - Configurable punctuation speaking ("." as Period/Dot, "/" as Slash/Stroke), Morse tone pitch/volume, voice volume, and (iOS) which installed voice speaks
 - Random or fixed character ordering
+- Automatically scales its layout up on iPads and Android tablets to take advantage of the larger screen
 - All settings persist across app restarts
 - In-app Help page with a jump-to-section table of contents
 
