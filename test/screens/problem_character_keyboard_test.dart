@@ -68,24 +68,62 @@ void main() {
   bool isHighlighted(WidgetTester tester, String character) =>
       find.byKey(Key('focus-highlight-$character')).evaluate().isNotEmpty;
 
-  testWidgets('chips are roughly 10% shorter than a stock FilterChip with this '
-      'label, with their width left unchanged', (tester) async {
-    await tester.pumpWidget(
-      wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore())),
-    );
-    await tester.pump();
+  testWidgets(
+    'chips fill their grid cell -- 35% taller than wide, per-column width, '
+    'not sized to their own label',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore())),
+      );
+      await tester.pump();
 
-    final size = tester.getSize(find.widgetWithText(FilterChip, 'A'));
-    // A stock FilterChip with this two-line label (character + score)
-    // measures ~48.1 wide x 48.0 tall before the deliberate
-    // padding/materialTapTargetSize override in the widget (Bill,
-    // 2026-09-02: chips read too tall) -- this pins that override to
-    // roughly a 10% height cut (48.0 -> ~43.2) while leaving the width
-    // (driven by content plus horizontal-only padding, none of which
-    // changed) untouched.
-    expect(size.height, closeTo(43.2, 0.5));
-    expect(size.width, closeTo(48.1, 0.5));
-  });
+      final size = tester.getSize(find.widgetWithText(FilterChip, 'A'));
+      // Chip size is entirely grid-driven, not content-driven (2026-09-02:
+      // chips moved from a [Wrap], which sized each chip to its own label,
+      // to a fixed 6-column grid so every chip -- not just chips with the
+      // same label length -- is identically sized). Width is whatever one
+      // of 6 equal columns comes out to across the 432-logical-pixel
+      // content area ([ConstrainedBox]'s 480 max width minus the screen's
+      // 24-a-side padding) with 5 8-pixel gaps between them. Height
+      // (mainAxisExtent) is a fixed 58.3 -- 35% taller than the chip's own
+      // former unconstrained height of 43.2 -- deliberately taller than
+      // wide so the two-line label (character plus tally number) has
+      // enough room without the cell reading as a cramped square (Bill,
+      // 2026-09-02).
+      expect(size.height, closeTo(58.3, 0.5));
+      expect(size.width, closeTo((432 - 5 * 8) / 6, 0.5));
+    },
+  );
+
+  testWidgets(
+    'the trailing partial row is centered -- shifted one column right so '
+    'it leaves one empty cell on each side, rather than left-aligned '
+    'against the six full rows above it',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(ProblemCharacterKeyboard(store: _FakeProblemCharacterStore())),
+      );
+      await tester.pump();
+
+      // allCharacters is 26 letters + 10 numbers + 4 punctuation, so the
+      // trailing (7th) row is exactly the punctuation set ('.', ',', '?',
+      // '/') -- '.' is that row's own first (leftmost) character, and
+      // 'B' is column 1 (the second column) of the very first row.
+      // Centering the short row should put '.' in that same column, one
+      // in from the left edge rather than flush against it.
+      expect(
+        tester.getTopLeft(find.widgetWithText(FilterChip, '.')).dx,
+        tester.getTopLeft(find.widgetWithText(FilterChip, 'B')).dx,
+      );
+      // '/' is the trailing row's last character; 'E' (the 5th letter) is
+      // column 4 of the first row -- the same column '/' should land in
+      // once the row is centered (column 1 through column 4).
+      expect(
+        tester.getTopLeft(find.widgetWithText(FilterChip, '/')).dx,
+        tester.getTopLeft(find.widgetWithText(FilterChip, 'E')).dx,
+      );
+    },
+  );
 
   testWidgets(
     'selecting a chip never changes its own size, and selecting every '
@@ -102,7 +140,7 @@ void main() {
       final chipSizeBefore = tester.getSize(
         find.widgetWithText(FilterChip, 'A'),
       );
-      final gridSizeBefore = tester.getSize(find.byType(Wrap));
+      final gridSizeBefore = tester.getSize(find.byType(GridView));
 
       for (final character in allCharacters) {
         await tester.tap(
@@ -120,7 +158,7 @@ void main() {
         tester.getSize(find.widgetWithText(FilterChip, 'A')),
         chipSizeBefore,
       );
-      expect(tester.getSize(find.byType(Wrap)), gridSizeBefore);
+      expect(tester.getSize(find.byType(GridView)), gridSizeBefore);
     },
   );
 

@@ -13,6 +13,13 @@ final ValueNotifier<List<String>> debugLogEntries = ValueNotifier([]);
 // 13's speech-recognition timing work is done -- Bill asked for it off
 // and the on-screen panel hidden. Left as a flip-able flag (not deleted)
 // since the next hard-to-diagnose on-device bug will want this back.
+//
+// 2026-09-02: turned back on, then off again the same day -- confirmed
+// the AirPods loud-voice bug fixed (a hung live-speak() call wedging the
+// TTS queue) and the missing iOS lock-screen controls resolved (a stuck
+// per-app mediaremoted registration, cleared by rebooting the device;
+// not a code bug at all). Flip back on for the next hard-to-diagnose
+// on-device bug.
 const bool _loggingEnabled = false;
 
 void logDebug(String message) {

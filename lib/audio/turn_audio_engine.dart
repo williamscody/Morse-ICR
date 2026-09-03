@@ -149,7 +149,22 @@ class TurnAudioEngine implements TurnPlayer {
     await _player.setAudioSource(InMemoryAudioSource(rendered.wavBytes));
     _preparedPlayer = null;
     _preparedTiming = null;
-    logDebug('playTurn($character): play()');
+    // answerStart/totalDuration/hasAnswer logged here (not just at the
+    // top of this method) so this line's own timestamp is what anchors
+    // them to a real wall-clock moment -- correlating this against
+    // SpeechToTextResponseListener's own status/restart timestamps is
+    // the intended diagnostic for the AirPods loud-voice bug under
+    // investigation (2026-09-02): that restart cycle flips the shared
+    // AVAudioSession's category on every OS-driven listen-session
+    // restart, on a cadence that isn't synchronized to turn playback at
+    // all, and this is what a restart landing inside a turn's *answer*
+    // segment specifically (not its much-shorter Morse segment) would
+    // look like in the logs.
+    logDebug(
+      'playTurn($character): play() answerStart=${rendered.timing.answerStart} '
+      'totalDuration=${rendered.timing.totalDuration} '
+      'hasAnswer=${rendered.timing.hasAnswer}',
+    );
     final playFuture = _player.play();
     issued.complete(rendered.timing);
     logDebug('playTurn($character): play() issued');
@@ -240,7 +255,14 @@ class TurnAudioEngine implements TurnPlayer {
     final timing = _preparedTiming!;
     _preparedPlayer = null;
     _preparedTiming = null;
-    logDebug('playPrepared(): play()');
+    // See _playTurn's matching comment -- same diagnostic purpose, and
+    // this is the path an actual training session almost always takes
+    // (prepareTurn() runs ahead of time while the previous turn is still
+    // playing; playTurn() is only the not-ready-in-time fallback).
+    logDebug(
+      'playPrepared(): play() answerStart=${timing.answerStart} '
+      'totalDuration=${timing.totalDuration} hasAnswer=${timing.hasAnswer}',
+    );
     final playFuture = _player.play();
     issued.complete(timing);
     logDebug('playPrepared(): play() issued');

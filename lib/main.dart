@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'app.dart';
 import 'audio/audio_session_setup.dart';
 import 'audio/training_audio_handler.dart';
+import 'debug_log.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,22 +30,34 @@ Future<void> main() async {
   // Android background audio); left off desktop/web, which this project
   // keeps buildable but doesn't target.
   if (Platform.isIOS || Platform.isAndroid) {
-    trainingAudioHandler = await AudioService.init(
-      builder: TrainingAudioHandler.new,
-      config: const AudioServiceConfig(
-        androidNotificationChannelName: 'Morse ICR Trainer training',
-        androidNotificationChannelDescription:
-            'Shows while a training session is running or paused, with '
-            'Play/Pause controls.',
-        // A Pause (unlike a Stop) doesn't end the session -- keeping the
-        // service in the foreground through it, rather than dropping to
-        // a lower-priority state Android is free to reclaim, is what
-        // makes Resume from the lock screen reliable. The tradeoff: the
-        // notification stays persistent (non-swipeable) through Pause
-        // too, not just while actively training.
-        androidStopForegroundOnPause: false,
-      ),
-    );
+    // Temporary diagnostic logging (2026-09-02, see debug_log.dart's own
+    // note) -- Bill reported the iOS lock-screen Now Playing card gone
+    // after working previously; this confirms whether [AudioService.init]
+    // itself is even succeeding (a null [trainingAudioHandler] afterward
+    // would make every [reportTraining]/[reportPaused]/[reportIdle] call
+    // in TrainingScreen a silent no-op, `?.` and all) before suspecting
+    // anything further downstream.
+    try {
+      trainingAudioHandler = await AudioService.init(
+        builder: TrainingAudioHandler.new,
+        config: const AudioServiceConfig(
+          androidNotificationChannelName: 'Morse ICR Trainer training',
+          androidNotificationChannelDescription:
+              'Shows while a training session is running or paused, with '
+              'Play/Pause controls.',
+          // A Pause (unlike a Stop) doesn't end the session -- keeping the
+          // service in the foreground through it, rather than dropping to
+          // a lower-priority state Android is free to reclaim, is what
+          // makes Resume from the lock screen reliable. The tradeoff: the
+          // notification stays persistent (non-swipeable) through Pause
+          // too, not just while actively training.
+          androidStopForegroundOnPause: false,
+        ),
+      );
+      logDebug('main: AudioService.init succeeded, trainingAudioHandler set');
+    } catch (e) {
+      logDebug('main: AudioService.init threw: $e');
+    }
   }
 
   runApp(const MorseIcrApp());

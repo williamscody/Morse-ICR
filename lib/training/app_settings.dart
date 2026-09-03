@@ -29,6 +29,8 @@ class AppSettings {
     this.selectedCharacterSetNames = const ['letters'],
     this.voiceEnabled = true,
     this.recognitionEnabled = true,
+    this.selectedVoiceName = '',
+    this.selectedVoiceLocale = '',
   });
 
   final bool speakPeriodAsDot;
@@ -36,6 +38,16 @@ class AppSettings {
   final int morsePitchHz;
   final int morseVolumePercent;
   final int voiceVolumePercent;
+
+  /// Section 35's "Voice" picker -- empty means "auto" (see
+  /// [TtsAnswerSpeaker._bestAvailableVoice]), the default for a learner
+  /// who's never opened this setting. A plain empty string rather than
+  /// `null` so this stays a non-nullable field like every other setting
+  /// here, avoiding the "explicit null" `copyWith` problem that would
+  /// otherwise come with letting a learner pick "Auto" again after
+  /// having picked something else.
+  final String selectedVoiceName;
+  final String selectedVoiceLocale;
 
   /// When false, characters play in the active set's own order instead
   /// of a random draw -- a diagnostic toggle (2026-08-23) for getting a
@@ -68,6 +80,8 @@ class AppSettings {
     List<String>? selectedCharacterSetNames,
     bool? voiceEnabled,
     bool? recognitionEnabled,
+    String? selectedVoiceName,
+    String? selectedVoiceLocale,
   }) => AppSettings(
     speakPeriodAsDot: speakPeriodAsDot ?? this.speakPeriodAsDot,
     speakSlashAsStroke: speakSlashAsStroke ?? this.speakSlashAsStroke,
@@ -82,6 +96,8 @@ class AppSettings {
         selectedCharacterSetNames ?? this.selectedCharacterSetNames,
     voiceEnabled: voiceEnabled ?? this.voiceEnabled,
     recognitionEnabled: recognitionEnabled ?? this.recognitionEnabled,
+    selectedVoiceName: selectedVoiceName ?? this.selectedVoiceName,
+    selectedVoiceLocale: selectedVoiceLocale ?? this.selectedVoiceLocale,
   );
 
   Map<String, Object?> toJson() => {
@@ -97,6 +113,8 @@ class AppSettings {
     'selectedCharacterSetNames': selectedCharacterSetNames,
     'voiceEnabled': voiceEnabled,
     'recognitionEnabled': recognitionEnabled,
+    'selectedVoiceName': selectedVoiceName,
+    'selectedVoiceLocale': selectedVoiceLocale,
   };
 
   factory AppSettings.fromJson(Map<String, Object?> json) {
@@ -125,6 +143,11 @@ class AppSettings {
       voiceEnabled: json['voiceEnabled'] as bool? ?? defaults.voiceEnabled,
       recognitionEnabled:
           json['recognitionEnabled'] as bool? ?? defaults.recognitionEnabled,
+      selectedVoiceName:
+          json['selectedVoiceName'] as String? ?? defaults.selectedVoiceName,
+      selectedVoiceLocale:
+          json['selectedVoiceLocale'] as String? ??
+          defaults.selectedVoiceLocale,
     );
   }
 }

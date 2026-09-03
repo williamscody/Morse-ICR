@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morse_icr/screens/settings_screen.dart';
+import 'package:morse_icr/speech/tts_voice_option.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: child);
@@ -15,6 +16,9 @@ void main() {
     int morseVolumePercent = 60,
     int voiceVolumePercent = 100,
     bool randomCharacterOrder = true,
+    List<TtsVoiceOption> voiceOptions = const [],
+    String selectedVoiceName = '',
+    String selectedVoiceLocale = '',
     ValueChanged<bool>? onVoiceChanged,
     ValueChanged<bool>? onRecognitionChanged,
     VoidCallback? onOpenVoiceSetup,
@@ -24,6 +28,7 @@ void main() {
     ValueChanged<int>? onMorseVolumeChanged,
     ValueChanged<int>? onVoiceVolumeChanged,
     ValueChanged<bool>? onRandomCharacterOrderChanged,
+    void Function(String name, String locale)? onSpeechVoiceChanged,
   }) => SettingsScreen(
     voiceEnabled: voiceEnabled,
     voicePreparing: voicePreparing,
@@ -34,6 +39,9 @@ void main() {
     morseVolumePercent: morseVolumePercent,
     voiceVolumePercent: voiceVolumePercent,
     randomCharacterOrder: randomCharacterOrder,
+    voiceOptions: voiceOptions,
+    selectedVoiceName: selectedVoiceName,
+    selectedVoiceLocale: selectedVoiceLocale,
     onVoiceChanged: onVoiceChanged ?? (_) {},
     onRecognitionChanged: onRecognitionChanged ?? (_) {},
     onOpenVoiceSetup: onOpenVoiceSetup ?? () {},
@@ -43,6 +51,7 @@ void main() {
     onMorseVolumeChanged: onMorseVolumeChanged ?? (_) {},
     onVoiceVolumeChanged: onVoiceVolumeChanged ?? (_) {},
     onRandomCharacterOrderChanged: onRandomCharacterOrderChanged ?? (_) {},
+    onSpeechVoiceChanged: onSpeechVoiceChanged ?? (_, _) {},
   );
 
   testWidgets('renders the Voice and Speech Recognition switches at the '
@@ -56,6 +65,23 @@ void main() {
     final switches = tester.widgetList<Switch>(find.byType(Switch)).toList();
     expect(switches[0].value, isTrue);
     expect(switches[1].value, isFalse);
+  });
+
+  testWidgets('the Voice/Speech Recognition/Random Character Order toggle rows '
+      "don't overflow at an iPhone mini/SE-class width -- regression: "
+      '"Random Character Order" (the longest of the three labels) used to '
+      'overflow past its Switch at 390 logical pixels wide, before the '
+      "label got wrapped in an Expanded so it can wrap instead", (
+    tester,
+  ) async {
+    addTearDown(() => tester.view.resetPhysicalSize());
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1.0;
+
+    await tester.pumpWidget(wrap(buildScreen(voicePreparing: true)));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('shows "Preparing voice…" only when voicePreparing is true', (
@@ -108,6 +134,209 @@ void main() {
 
       expect(changes, [false]);
       expect(tester.widget<Switch>(find.byType(Switch).at(1)).value, isFalse);
+    },
+  );
+
+  testWidgets('shows "Auto" selected by default, with every given voice '
+      'option listed by name and quality', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        buildScreen(
+          voiceOptions: const [
+            TtsVoiceOption(
+              name: 'Samantha',
+              locale: 'en-US',
+              quality: 'enhanced',
+            ),
+            TtsVoiceOption(
+              name: 'Nathan',
+              locale: 'en-US',
+              quality: 'enhanced',
+            ),
+          ],
+        ),
+      ),
+    );
+
+    expect(find.text('Auto'), findsOneWidget);
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Samantha (Enhanced)'), findsOneWidget);
+    expect(find.text('Nathan (Enhanced)'), findsOneWidget);
+  });
+
+  testWidgets('does not double the quality suffix for a voice whose own name '
+      'already includes it -- regression: some installed voices report '
+      'their name as literally "Nathan (Enhanced)", not just "Nathan", '
+      'while quality is *also* separately "enhanced"; appending '
+      'unconditionally produced "Nathan (Enhanced) (Enhanced)", long '
+      'enough to wrap and to crush the "Speech Voice" label next to it '
+      "down to almost no width (Bill, on-device: label text rendering "
+      'one letter per line)', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        buildScreen(
+          voiceOptions: const [
+            TtsVoiceOption(
+              name: 'Nathan (Enhanced)',
+              locale: 'en-US',
+              quality: 'enhanced',
+            ),
+          ],
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nathan (Enhanced)'), findsOneWidget);
+    expect(find.text('Nathan (Enhanced) (Enhanced)'), findsNothing);
+  });
+
+  testWidgets(
+    'the "Speech Voice" label stays on one line even with a very long '
+    'voice name selected -- regression: an unconstrained [DropdownButton] '
+    'sizes itself to its *widest* item regardless of how little row '
+    "width is left over, and a long enough item crushed this label down "
+    'to almost no width, wrapping it one letter per line (Bill, '
+    'on-device)',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          buildScreen(
+            voiceOptions: const [
+              TtsVoiceOption(
+                name: 'A Very Long Example Installed Voice Name Indeed',
+                locale: 'en-US',
+                quality: 'enhanced',
+              ),
+            ],
+            selectedVoiceName:
+                'A Very Long Example Installed Voice Name Indeed',
+            selectedVoiceLocale: 'en-US',
+          ),
+        ),
+      );
+
+      // "Voice" (the toggle label above) renders on one line at the
+      // same [titleMedium] style -- "Speech Voice" should match its
+      // height if it's also one line, versus many times taller if
+      // crushed into a one-letter-per-line wrap.
+      final speechVoiceHeight = tester
+          .getSize(find.text('Speech Voice'))
+          .height;
+      final voiceHeight = tester.getSize(find.text('Voice')).height;
+      expect(speechVoiceHeight, closeTo(voiceHeight, 1));
+    },
+  );
+
+  testWidgets(
+    'shows the given selected voice, not "Auto", when one is already set',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          buildScreen(
+            voiceOptions: const [
+              TtsVoiceOption(
+                name: 'Nathan',
+                locale: 'en-US',
+                quality: 'enhanced',
+              ),
+            ],
+            selectedVoiceName: 'Nathan',
+            selectedVoiceLocale: 'en-US',
+          ),
+        ),
+      );
+
+      expect(find.text('Nathan (Enhanced)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'falls back to showing "Auto" when the selected voice name/locale '
+    "doesn't match any currently available option -- e.g. a preference "
+    "persisted on a different device that doesn't have it installed",
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          buildScreen(
+            voiceOptions: const [
+              TtsVoiceOption(
+                name: 'Nathan',
+                locale: 'en-US',
+                quality: 'enhanced',
+              ),
+            ],
+            selectedVoiceName: 'Some Other Voice',
+            selectedVoiceLocale: 'en-GB',
+          ),
+        ),
+      );
+
+      expect(find.text('Auto'), findsOneWidget);
+    },
+  );
+
+  testWidgets('selecting a voice option reports its name and locale via '
+      'onSpeechVoiceChanged', (tester) async {
+    final changes = <(String, String)>[];
+    await tester.pumpWidget(
+      wrap(
+        buildScreen(
+          voiceOptions: const [
+            TtsVoiceOption(
+              name: 'Nathan',
+              locale: 'en-US',
+              quality: 'enhanced',
+            ),
+          ],
+          onSpeechVoiceChanged: (name, locale) => changes.add((name, locale)),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Nathan (Enhanced)').last);
+    await tester.pumpAndSettle();
+
+    expect(changes, [('Nathan', 'en-US')]);
+    expect(find.text('Nathan (Enhanced)'), findsOneWidget);
+  });
+
+  testWidgets(
+    'selecting "Auto" after a specific voice was selected reports empty '
+    'name and locale',
+    (tester) async {
+      final changes = <(String, String)>[];
+      await tester.pumpWidget(
+        wrap(
+          buildScreen(
+            voiceOptions: const [
+              TtsVoiceOption(
+                name: 'Nathan',
+                locale: 'en-US',
+                quality: 'enhanced',
+              ),
+            ],
+            selectedVoiceName: 'Nathan',
+            selectedVoiceLocale: 'en-US',
+            onSpeechVoiceChanged: (name, locale) => changes.add((name, locale)),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(DropdownButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Auto').last);
+      await tester.pumpAndSettle();
+
+      expect(changes, [('', '')]);
+      expect(find.text('Auto'), findsOneWidget);
     },
   );
 
@@ -251,10 +480,7 @@ void main() {
       await tester.pumpWidget(wrap(buildScreen(randomCharacterOrder: false)));
 
       expect(find.text('Random Character Order'), findsOneWidget);
-      expect(
-        tester.widget<Switch>(find.byType(Switch).last).value,
-        isFalse,
-      );
+      expect(tester.widget<Switch>(find.byType(Switch).last).value, isFalse);
     },
   );
 

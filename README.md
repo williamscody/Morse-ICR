@@ -17,7 +17,7 @@ Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android
 - Three-memory countdown Timer that can auto-stop a session
 - Persistent Training Log with per-session notes, cumulative training time, and CSV export
 - Computer voice announcements (Voice), and on-device Speech Recognition (experimental) that credits you for speaking the right answer in time
-- Configurable punctuation speaking ("." as Period/Dot, "/" as Slash/Stroke), Morse tone pitch/volume, and voice volume
+- Configurable punctuation speaking ("." as Period/Dot, "/" as Slash/Stroke), Morse tone pitch/volume, voice volume, and (iOS) which installed voice speaks
 - Random or fixed character ordering
 - All settings persist across app restarts
 - In-app Help page with a jump-to-section table of contents
@@ -81,6 +81,7 @@ Choose how the computer announces two punctuation characters: "." as either "Per
 - **Morse Pitch:** the tone frequency of the Morse code sidetone, in Hz.
 - **Morse Volume:** playback volume of the Morse tone.
 - **Voice Volume:** playback volume of the computer's spoken answer, independent of Morse Volume.
+- **Speech Voice (iOS only):** which installed voice speaks the computer's answer. "Auto" (the default) picks the first higher-quality (Enhanced/Premium) English voice found installed; choose a specific voice by name instead if you have more than one installed and want a particular one — see "Voice Quality" below for where to download additional voices.
 
 ### Random Character Order
 
@@ -98,8 +99,8 @@ A few limits are inherent to any speech recognizer and not fixable through setti
 
 The computer's spoken voice comes from your device's own text-to-speech system, not from Morse ICR Trainer itself — so its clarity depends on which voice your device has installed and selected.
 
-- **iOS:** open Settings > Accessibility > Spoken Content > Voices > English, tap Samantha, then tap the ⓘ info button next to it and download the Enhanced (or Premium, if offered) quality. Morse ICR Trainer automatically speaks with the highest-quality English voice it finds installed, so there is nothing to select inside the app itself — once Samantha (Enhanced) finishes downloading, the app starts using it right away.
-- **Android:** open Settings > System > Languages & input > Text-to-speech output (the exact path varies a bit by device) and tap the gear icon next to the preferred engine, usually Google Text-to-speech Engine. Under Language, choose English (United States), then preview the available voices and pick the clearest one — favor a voice labeled Network over Local, since Network voices use higher-quality neural synthesis closer to Samantha (Enhanced)'s naturalness. Android has no single named voice equivalent to Samantha, and unlike iOS, Morse ICR Trainer does not pick a voice for you here — whichever voice you set as the system default is the one it speaks with.
+- **iOS:** open Settings > General > Accessibility > Read and Speak > Voices > English, tap a voice (e.g. Samantha or Nathan), then tap the ⓘ info button next to it and download the Enhanced (or Premium, if offered) quality. Once it finishes downloading, use this app's own Settings > Speech Voice to pick that voice specifically — leaving it on "Auto" just picks the first higher-quality English voice found installed, which may not be the one you meant if more than one is installed.
+- **Android:** open Settings > Accessibility > Text-to-speech output — on some devices it's instead under Settings > System > Languages & input > Text-to-speech output, or on Samsung devices, Settings > General management > Text-to-speech (the exact path varies by device) — and tap the gear icon next to the preferred engine, usually Google Text-to-speech Engine. Under Language, choose English (United States), then preview the available voices and pick the clearest one — favor a voice labeled Network over Local, since Network voices use higher-quality neural synthesis closer to Samantha (Enhanced)'s naturalness. Android has no single named voice equivalent to Samantha, and no in-app "Speech Voice" picker like iOS has — whichever voice you set as the system default here is the one it speaks with.
 
 ---
 

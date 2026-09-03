@@ -17,6 +17,7 @@ import '../speech/file_enrollment_store.dart';
 import '../speech/response_listener.dart';
 import '../speech/speech_to_text_response_listener.dart';
 import '../speech/tts_answer_speaker.dart';
+import '../speech/tts_voice_option.dart';
 import '../speech/voice_response_listener.dart';
 import '../training/app_settings.dart';
 import '../training/app_settings_store.dart';
@@ -41,6 +42,9 @@ import 'widgets/stepped_int_control.dart';
 
 // See lib/debug_log.dart's own note -- kept as a flip-able flag, not
 // deleted, for the next hard-to-diagnose on-device bug.
+//
+// 2026-09-02: turned back on, then off again the same day -- see
+// debug_log.dart's matching note for what got fixed.
 const bool _showDebugLogPanel = false;
 
 /// The training screen wired to the character-generation loop,
@@ -205,6 +209,11 @@ class _TrainingScreenState extends State<TrainingScreen>
   int _sessionStartExtraGapMs = 0;
   bool _voiceEnabled = true;
   bool _voicePreparing = false;
+  // Populated once [TtsAnswerSpeaker.ready] resolves, alongside
+  // [_voicePreparing] going false -- see initState. Empty (rather than
+  // awaited synchronously) until then, same "momentarily-stale" pattern
+  // as everything else seeded from [_appSettingsStore]'s async load.
+  List<TtsVoiceOption> _availableVoices = [];
   bool _recognitionEnabled = true;
   bool _lastResponseCorrect = false;
   // Settings screen preferences (morse_icr_spec.md section 35), loaded
@@ -339,10 +348,13 @@ class _TrainingScreenState extends State<TrainingScreen>
         // characters in it (charactersForSelection) and no way to fix
         // that from the UI, since there's no chip left to deselect it
         // with (Bill, 2026-08-31).
-        final restored = {
-          for (final name in settings.selectedCharacterSetNames)
-            CharacterSetType.values.asNameMap()[name],
-        }..removeWhere((type) => type == null || type == CharacterSetType.words);
+        final restored =
+            {
+              for (final name in settings.selectedCharacterSetNames)
+                CharacterSetType.values.asNameMap()[name],
+            }..removeWhere(
+              (type) => type == null || type == CharacterSetType.words,
+            );
         if (restored.isNotEmpty) {
           _selectedCharacterSets
             ..clear()
@@ -359,7 +371,12 @@ class _TrainingScreenState extends State<TrainingScreen>
       // announcements silently slow or missing.
       _voicePreparing = true;
       answerSpeaker.ready.whenComplete(() {
-        if (mounted) setState(() => _voicePreparing = false);
+        if (mounted) {
+          setState(() {
+            _voicePreparing = false;
+            _availableVoices = answerSpeaker.availableVoices;
+          });
+        }
       });
     }
     _trainingEngine.onCharacterGenerated = (character) {
@@ -1177,6 +1194,16 @@ class _TrainingScreenState extends State<TrainingScreen>
         ),
       );
       answerSpeaker.setVoiceVolume(settings.voiceVolumePercent / 100);
+      unawaited(
+        answerSpeaker.setPreferredVoice(
+          name: settings.selectedVoiceName.isEmpty
+              ? null
+              : settings.selectedVoiceName,
+          locale: settings.selectedVoiceLocale.isEmpty
+              ? null
+              : settings.selectedVoiceLocale,
+        ),
+      );
     }
     _trainingEngine.randomCharacterOrder = settings.randomCharacterOrder;
   }
@@ -1229,6 +1256,9 @@ class _TrainingScreenState extends State<TrainingScreen>
           morseVolumePercent: _appSettings.morseVolumePercent,
           voiceVolumePercent: _appSettings.voiceVolumePercent,
           randomCharacterOrder: _appSettings.randomCharacterOrder,
+          voiceOptions: _availableVoices,
+          selectedVoiceName: _appSettings.selectedVoiceName,
+          selectedVoiceLocale: _appSettings.selectedVoiceLocale,
           onVoiceChanged: (value) {
             setState(() => _voiceEnabled = value);
             _persistMainScreenSettings();
@@ -1251,6 +1281,12 @@ class _TrainingScreenState extends State<TrainingScreen>
           ),
           onRandomCharacterOrderChanged: (value) => _updateAppSettings(
             _appSettings.copyWith(randomCharacterOrder: value),
+          ),
+          onSpeechVoiceChanged: (name, locale) => _updateAppSettings(
+            _appSettings.copyWith(
+              selectedVoiceName: name,
+              selectedVoiceLocale: locale,
+            ),
           ),
         ),
       ),
@@ -1289,10 +1325,7 @@ class _TrainingScreenState extends State<TrainingScreen>
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 4,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1626,9 +1659,7 @@ class _TrainingActionButton extends StatelessWidget {
         backgroundColor: color,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
       onPressed: onPressed,
       child: Text(label),

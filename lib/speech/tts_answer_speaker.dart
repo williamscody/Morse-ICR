@@ -16,6 +16,7 @@ import '../debug_log.dart';
 import '../morse/morse_code.dart';
 import 'answer_speaker.dart';
 import 'spoken_character.dart';
+import 'tts_voice_option.dart';
 
 /// Speaks characters aloud via on-device text-to-speech
 /// (morse_icr_spec.md section 28's "computer voice").
@@ -37,23 +38,28 @@ import 'spoken_character.dart';
 /// I/O timing variance. Both are absent from Morse tone playback, which
 /// has always used in-memory bytes.
 class TtsAnswerSpeaker implements AnswerSpeaker {
-  /// [speakPeriodAsDot]/[speakSlashAsStroke]/[voiceVolume] seed this
-  /// speaker's section-35 settings for the very first pre-render pass;
-  /// production code (TrainingScreen) generally starts these at their
-  /// defaults (persisted settings load asynchronously, after this
-  /// speaker already exists) and corrects them moments later via
-  /// [updatePunctuationSpelling]/[setVoiceVolume] once the load resolves
-  /// -- the same "reflects momentarily-stale-then-corrected state"
-  /// approach [_useHighestQualityVoice] already takes for a newly
-  /// installed voice.
+  /// [speakPeriodAsDot]/[speakSlashAsStroke]/[voiceVolume]/
+  /// [preferredVoiceName]/[preferredVoiceLocale] seed this speaker's
+  /// section-35 settings for the very first pre-render pass; production
+  /// code (TrainingScreen) generally starts these at their defaults
+  /// (persisted settings load asynchronously, after this speaker already
+  /// exists) and corrects them moments later via
+  /// [updatePunctuationSpelling]/[setVoiceVolume]/[setPreferredVoice]
+  /// once the load resolves -- the same "reflects momentarily-stale-
+  /// then-corrected state" approach [_selectVoice]'s own auto-pick
+  /// fallback already takes for a newly installed voice.
   TtsAnswerSpeaker({
     FlutterTts? tts,
     AudioPlayer? player,
     this.speakPeriodAsDot = true,
     this.speakSlashAsStroke = false,
     double voiceVolume = 1.0,
+    String? preferredVoiceName,
+    String? preferredVoiceLocale,
   }) : _tts = tts ?? FlutterTts(),
        _voiceVolume = voiceVolume,
+       _preferredVoiceName = preferredVoiceName,
+       _preferredVoiceLocale = preferredVoiceLocale,
        // See TurnAudioEngine's matching constructor comment --
        // handleAudioSessionActivation: false avoids this player
        // redundantly reactivating the shared AVAudioSession (which
@@ -75,6 +81,18 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   bool speakPeriodAsDot;
   bool speakSlashAsStroke;
   double _voiceVolume;
+  // Null means "auto" -- see [_selectVoice]. Set from the section-35
+  // "Voice" picker via [setPreferredVoice]; a name with no matching
+  // installed voice (e.g. persisted on one device, then restored on
+  // another without it) falls back to auto rather than silently doing
+  // nothing, same as never having a preference at all.
+  String? _preferredVoiceName;
+  String? _preferredVoiceLocale;
+  // Every English-locale voice flutter_tts reported as installed, once
+  // known -- see [_loadAvailableVoices]. Populated before [_selectVoice]
+  // ever runs, so both it and the public [availableVoices] getter (for
+  // the Settings picker) always see the same list.
+  List<TtsVoiceOption> _availableVoices = [];
 
   // Every operation that touches _player runs through this queue, so
   // resetPlayer() can never dispose it out from under a still-in-flight
@@ -102,6 +120,12 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   /// triggers a fresh render pass for every character.
   Future<void> get ready => _ready;
 
+  /// Every English-locale voice installed on this device, for the
+  /// section-35 "Voice" picker -- empty before [ready] resolves, or if
+  /// voice discovery fails (see [_loadAvailableVoices]'s own try/catch).
+  List<TtsVoiceOption> get availableVoices =>
+      List.unmodifiable(_availableVoices);
+
   Future<void> _initialize() async {
     // Without these, speak()/synthesizeToFile()'s futures resolve as
     // soon as the request is *handed to* the platform TTS engine, not
@@ -117,50 +141,91 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
       // AVSpeechSynthesizer and the Morse tone player
       // (package:audioplayers) would otherwise renegotiate the session
       // against each other on every play() call.
-
-      // iOS's default "compact" voice has audible synthesis artifacts
-      // that a higher-quality installed voice doesn't have. Only
-      // switches if one is actually available -- Enhanced/Premium
-      // voices are an opt-in download in iOS Settings, not guaranteed
-      // present.
-      await _useHighestQualityVoice();
+      await _selectVoice();
     }
 
     await _prerenderAll();
   }
 
-  Future<void> _useHighestQualityVoice() async {
+  /// Populates [_availableVoices] from whatever flutter_tts reports as
+  /// installed, English-locale voices only -- shared by [_selectVoice]
+  /// (which picks from it) and the public [availableVoices] getter
+  /// (which lists it for the Settings picker), so both always agree on
+  /// what's actually available on this device.
+  Future<void> _loadAvailableVoices() async {
     try {
       final voices = await _tts.getVoices as List<dynamic>?;
       if (voices == null) return;
-
-      Map<String, dynamic>? best;
-      var bestRank = 1; // Only switch away from the default voice.
+      final options = <TtsVoiceOption>[];
       for (final entry in voices) {
         final voice = Map<String, dynamic>.from(entry as Map);
         final locale = voice['locale'] as String? ?? '';
         if (!locale.startsWith('en')) continue;
-        final quality = (voice['quality'] as String? ?? '').toLowerCase();
-        final rank = _voiceQualityRank[quality] ?? 1;
-        if (rank > bestRank) {
-          bestRank = rank;
-          best = voice;
-        }
+        options.add(
+          TtsVoiceOption(
+            name: voice['name'] as String? ?? '',
+            locale: locale,
+            quality: (voice['quality'] as String? ?? 'default').toLowerCase(),
+          ),
+        );
       }
-
-      final chosen = best;
-      if (chosen != null) {
-        await _tts.setVoice({
-          'name': chosen['name'] as String,
-          'locale': chosen['locale'] as String,
-        });
-        _voiceIdentifier = '${chosen['name']}_${chosen['locale']}';
-      }
+      _availableVoices = options;
     } catch (_) {
       // Voice discovery isn't guaranteed to succeed on every device --
-      // fall back to whatever the platform default voice is rather
-      // than blocking speech entirely.
+      // [_availableVoices] just stays empty, and [_selectVoice] falls
+      // back to whatever the platform default voice is rather than
+      // blocking speech entirely.
     }
+  }
+
+  /// Selects [_preferredVoiceName]/[_preferredVoiceLocale] (the
+  /// section-35 "Voice" setting) if it names a voice actually installed
+  /// on this device, falling back to auto-picking the highest-quality
+  /// installed English voice otherwise -- both when no preference has
+  /// ever been set (null, the default for a learner who's never opened
+  /// that setting) and when a *persisted* preference names a voice this
+  /// device doesn't have (e.g. restored from a different device). Only
+  /// switches away from the plain default voice if something better is
+  /// actually available -- Enhanced/Premium voices are an opt-in
+  /// download in iOS Settings, not guaranteed present, and iOS's default
+  /// "compact" voice has audible synthesis artifacts a higher-quality
+  /// one doesn't.
+  Future<void> _selectVoice() async {
+    await _loadAvailableVoices();
+    try {
+      TtsVoiceOption? chosen;
+      final preferredName = _preferredVoiceName;
+      if (preferredName != null) {
+        for (final voice in _availableVoices) {
+          if (voice.name == preferredName &&
+              (_preferredVoiceLocale == null ||
+                  voice.locale == _preferredVoiceLocale)) {
+            chosen = voice;
+            break;
+          }
+        }
+      }
+      chosen ??= _bestAvailableVoice();
+      if (chosen == null) return;
+      await _tts.setVoice({'name': chosen.name, 'locale': chosen.locale});
+      _voiceIdentifier = '${chosen.name}_${chosen.locale}';
+    } catch (_) {
+      // Same tolerance as _loadAvailableVoices -- speak()/pre-rendering
+      // fall back to whatever the platform default voice is.
+    }
+  }
+
+  TtsVoiceOption? _bestAvailableVoice() {
+    TtsVoiceOption? best;
+    var bestRank = 1; // Only switch away from the default voice.
+    for (final voice in _availableVoices) {
+      final rank = _voiceQualityRank[voice.quality] ?? 1;
+      if (rank > bestRank) {
+        bestRank = rank;
+        best = voice;
+      }
+    }
+    return best;
   }
 
   /// Renders every character in [morseCodeTable] to a file once, then
@@ -211,13 +276,31 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
       // kills the whole app (blank white screen, then killed). stop()
       // interrupts the underlying AVSpeechSynthesizer directly so the
       // native spin doesn't keep burning CPU after Dart gives up on it.
-      await _tts.synthesizeToFile(spokenText, path, true).timeout(
-        const Duration(seconds: 5),
-        onTimeout: () {
-          logDebug('prerender($character): synthesizeToFile timed out');
-          unawaited(_tts.stop());
-        },
-      );
+      var timedOut = false;
+      await _tts
+          .synthesizeToFile(spokenText, path, true)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              logDebug('prerender($character): synthesizeToFile timed out');
+              timedOut = true;
+              unawaited(_tts.stop());
+            },
+          );
+      if (timedOut && await file.exists()) {
+        // The buffer-callback writer flushes audio incrementally as it
+        // goes, not atomically at the end -- confirmed on-device
+        // (2026-09-02): "A" under Samantha (Enhanced) hung on this same
+        // bug, but the file already existed by the time the timeout
+        // fired, containing only however much audio had been written
+        // before the hang. Left alone, that truncated fragment -- "A"
+        // played back as a short click, not the full word -- would get
+        // cached below exactly like a real, complete render. Deleting
+        // it here instead sends this character down the same live-
+        // synthesis fallback path (with its own matching timeout, see
+        // [_speak]) as a character that failed to render at all.
+        await file.delete();
+      }
     }
     if (await file.exists()) {
       final rendered = await file.readAsBytes();
@@ -234,7 +317,31 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
       // buffer -- speak() falls back to live synthesis for it instead.
       try {
         final wav = convertToPcm16Wav(rendered, targetSampleRate: _sampleRate);
-        _cachedAudio[character] = trimTrailingSilence(readPcm16Samples(wav));
+        final samples = trimTrailingSilence(readPcm16Samples(wav));
+        // Guards against a *previous* run's truncated file, not just a
+        // fresh one this call just avoided caching above -- the file
+        // this reads back was already sitting on disk (this whole
+        // branch only runs when `!await file.exists()` was false coming
+        // in, i.e. some earlier prerender pass wrote it, possibly
+        // before this truncation guard existed at all). Confirmed
+        // on-device (2026-09-02): a single-vowel word like "a" (see
+        // [spokenNames]) is short even fully spoken, but a genuinely
+        // truncated click fragment measured well under this floor --
+        // 100ms is comfortably below every real spoken character's own
+        // length while still well above a bare onset transient.
+        // Discarding it here (not just at synthesis time) makes this
+        // self-healing: a stale corrupt file from before this check
+        // existed gets caught and cleaned up the next time this
+        // character's audio is loaded, not just newly-created ones.
+        if (samples.length < (_sampleRate * 0.1).round()) {
+          logDebug(
+            'prerender($character): cached file too short '
+            '(${samples.length} samples), discarding',
+          );
+          await file.delete();
+          return;
+        }
+        _cachedAudio[character] = samples;
       } on FormatException catch (e) {
         logDebug('prerender($character): conversion failed: $e');
       }
@@ -276,6 +383,34 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     });
   }
 
+  /// Updates which installed voice (section 35's "Voice" picker) speaks
+  /// every character going forward -- null [name] means "auto" (see
+  /// [_bestAvailableVoice]), matching [TtsAnswerSpeaker]'s original
+  /// always-auto behavior for a learner who's never touched this
+  /// setting. Re-renders *every* character, not just "." and "/" like
+  /// [updatePunctuationSpelling] -- a voice change affects every spoken
+  /// word, and [_fileNameFor]'s cache key already includes
+  /// [_voiceIdentifier], so [_prerenderAll] naturally regenerates
+  /// everything under new file names rather than reusing the old
+  /// voice's recordings. A no-op if neither actually changed, same
+  /// reasoning as [updatePunctuationSpelling]'s own no-op guard. Only
+  /// [_selectVoice] itself is iOS-only (see [_initialize]'s matching
+  /// platform check) -- calling this on another platform just records
+  /// the preference harmlessly for whenever it might matter there too.
+  Future<void> setPreferredVoice({required String? name, String? locale}) {
+    return _enqueue(() async {
+      if (_preferredVoiceName == name && _preferredVoiceLocale == locale) {
+        return;
+      }
+      _preferredVoiceName = name;
+      _preferredVoiceLocale = locale;
+      if (!kIsWeb && Platform.isIOS) {
+        await _selectVoice();
+      }
+      await _prerenderAll();
+    });
+  }
+
   /// Updates the spoken answer's playback volume (section 35's "Voice:
   /// Volume") going forward -- applied as sample gain (see
   /// [scaleInt16Samples]'s doc comment for why), plus the live TTS
@@ -302,13 +437,35 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     final cachedSamples = _cachedAudio[character];
     if (cachedSamples == null) {
       logDebug('speak($character): no cached audio, live synth');
-      await _tts.speak(
-        spokenTextFor(
-          character,
-          speakPeriodAsDot: speakPeriodAsDot,
-          speakSlashAsStroke: speakSlashAsStroke,
-        ),
-      );
+      // Timed out, same as [_prerenderCharacter]'s own synthesizeToFile
+      // call -- confirmed on-device (2026-09-02) that the identical
+      // underlying AVSpeechSynthesizer hang (see that method's own
+      // comment) also happens via plain speak(), not just write()/
+      // synthesizeToFile, and specifically far more often on some
+      // voices (Samantha Enhanced) than others. Without this timeout, a
+      // single hung speak() call here -- awaitSpeakCompletion(true)
+      // means its Future never resolves on its own -- would never
+      // return, which permanently wedges [_enqueue]'s own queue (every
+      // operation after it, on any character, waits on this Future
+      // forever): confirmed on-device as the cause of a voice going
+      // completely silent for every character except the few that
+      // happened to already be cached (and so never needed this live
+      // fallback at all) before the wedge occurred.
+      await _tts
+          .speak(
+            spokenTextFor(
+              character,
+              speakPeriodAsDot: speakPeriodAsDot,
+              speakSlashAsStroke: speakSlashAsStroke,
+            ),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              logDebug('speak($character): live synth timed out');
+              unawaited(_tts.stop());
+            },
+          );
       return;
     }
 

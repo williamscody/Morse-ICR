@@ -1,5 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 
+import '../debug_log.dart';
+
 /// Set once at app startup (main.dart, iOS and Android) and read by
 /// [TrainingScreen] -- global rather than passed down through the widget
 /// tree because it's constructed before any widget exists, by
@@ -60,6 +62,12 @@ class TrainingAudioHandler extends BaseAudioHandler {
 
   /// Call when a training session starts.
   void reportTraining() {
+    // Temporary diagnostic logging (2026-09-02, see debug_log.dart's own
+    // note) -- confirms this actually runs, separating "TrainingScreen
+    // never called it" from "it ran but iOS/audio_service didn't
+    // surface a Now Playing card for it" as the cause of a reported
+    // missing lock-screen control.
+    logDebug('TrainingAudioHandler.reportTraining()');
     mediaItem.add(_mediaItem);
     playbackState.add(
       playbackState.value.copyWith(
@@ -77,6 +85,7 @@ class TrainingAudioHandler extends BaseAudioHandler {
   /// [AudioProcessingState.ready] (not `idle`) is what keeps iOS treating
   /// this as a live, just-paused session instead of a finished one.
   void reportPaused() {
+    logDebug('TrainingAudioHandler.reportPaused()');
     playbackState.add(
       playbackState.value.copyWith(
         controls: const [MediaControl.play],
@@ -91,6 +100,7 @@ class TrainingAudioHandler extends BaseAudioHandler {
   /// (mirrors the underlying audio actually going silent once
   /// [deactivateAudioSession] runs).
   void reportIdle() {
+    logDebug('TrainingAudioHandler.reportIdle()');
     playbackState.add(
       playbackState.value.copyWith(
         playing: false,

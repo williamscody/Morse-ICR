@@ -162,6 +162,34 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
     return ranked;
   }
 
+  // Column count for the character grid below (see [_gridSlots] and the
+  // [GridView.builder] itself in [build]) -- a single source shared by
+  // both so they can never disagree on how wide a row is.
+  static const _crossAxisCount = 6;
+
+  // [allCharacters] padded with `null`s so the grid below can pass this
+  // straight to [GridView.builder] as its item list: a `null` renders as
+  // an empty cell (see the `itemBuilder` in [build]). [allCharacters] is
+  // 40 long, so 40 % 6 leaves a trailing row of just 4 -- left-aligned by
+  // default, since a grid simply places items left-to-right with nothing
+  // to fill the row's remaining 2 columns. Centering that row means
+  // leaving 1 empty cell before it and 1 after; the `null`s inserted here
+  // supply the leading one (the trailing one needs nothing -- the grid
+  // already stops there once it runs out of items). (Bill, 2026-09-02:
+  // "center the last row of chips by moving them all to the right by one
+  // location.")
+  List<String?> get _gridSlots {
+    final lastRowCount = allCharacters.length % _crossAxisCount;
+    if (lastRowCount == 0) return allCharacters;
+    final fullRowsCount = allCharacters.length - lastRowCount;
+    final leadingGap = (_crossAxisCount - lastRowCount) ~/ 2;
+    return [
+      ...allCharacters.take(fullRowsCount),
+      for (var i = 0; i < leadingGap; i++) null,
+      ...allCharacters.skip(fullRowsCount),
+    ];
+  }
+
   // Recomputes [_selected] from scratch as the worst-scoring
   // [value.round()] characters in [_rankedByScore] -- not a merge with
   // whatever was selected before, so dragging all the way left really
@@ -234,287 +262,375 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
         ],
       ),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              // Less padding above the chips than to the sides/below --
-              // with the chips now the first thing in the column (the
-              // Focusizer moved below them, 2026-09-01), the old uniform
-              // 24 on every side left the whole screen sitting noticeably
-              // lower than it needed to (Bill, on-device).
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-              child: _loaded
-                  ? Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final character in allCharacters)
-                              Builder(
-                                builder: (context) {
-                                  final isSelected = _selected.contains(
-                                    character,
-                                  );
-                                  // A missing entry means never trained
-                                  // (transparent); a present one -- even a 0,
-                                  // for a character that's always been missed
-                                  // -- means it has, and gets colored (see
-                                  // [TrainingScreen._persistCharacterScores]
-                                  // for why presence and value are tracked
-                                  // separately).
-                                  final hasScore = _scores.containsKey(
-                                    character,
-                                  );
-                                  final score = _scores[character] ?? 0;
-                                  final color = hasScore
-                                      ? _heatMapColor(score, _maxScore)
-                                      : Colors.transparent;
-                                  final textColor = _readableTextColor(color);
-                                  final chip = FilterChip(
-                                    label: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          character,
-                                          style: TextStyle(color: textColor),
-                                        ),
-                                        // RichText, not Text -- a bare Text
-                                        // here would make the score digits
-                                        // ambiguous with the digit *chips*
-                                        // ('0'-'9' are themselves characters
-                                        // in [allCharacters]) for any test or
-                                        // tooling that finds chips by their
-                                        // label text.
-                                        RichText(
-                                          textScaler: MediaQuery.textScalerOf(
-                                            context,
+        // [LayoutBuilder]+[SingleChildScrollView] rather than a bare
+        // [Center], so this still centers everything vertically on any
+        // normal device -- where it fits comfortably, same as before --
+        // but scrolls instead of hard-overflowing (Flutter's yellow/black
+        // error stripes, clipped content) on a device short enough, or
+        // with large-enough accessibility text scaling, that it doesn't
+        // fit. The [ConstrainedBox]'s `minHeight` is what makes the
+        // [Center] below still center a shorter-than-viewport child;
+        // without it, [SingleChildScrollView] would top-align its child
+        // instead of centering it whenever content fits with room to
+        // spare, since a plain scroll view sizes to fill the viewport
+        // rather than to its own content. The 40-chip grid's own row
+        // height grew 35% (2026-09-02, taller rectangles instead of
+        // squares -- Bill: "need to be rectangles large enough to hold
+        // the letter and the tally number"), eating into a vertical
+        // budget this screen never had much slack in to begin with.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 480),
+                    child: Padding(
+                      // Less padding above the chips than to the
+                      // sides/below -- with the chips now the first thing
+                      // in the column (the Focusizer moved below them,
+                      // 2026-09-01), the old uniform 24 on every side left
+                      // the whole screen sitting noticeably lower than it
+                      // needed to (Bill, on-device).
+                      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                      child: _loaded
+                          ? Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // A fixed-column-count grid rather than [Wrap] --
+                                // [Wrap] sizes each chip to its own natural width
+                                // (narrower for a single-digit score, wider for a
+                                // double-digit one) and only wraps once a row runs
+                                // out of room, so rows didn't line up into a clean
+                                // grid and how many chips landed per row depended
+                                // on which chips happened to be next to each other
+                                // (Bill, 2026-09-02: "align all the chips... evenly
+                                // spaced and distributed"). [allCharacters] is 40
+                                // long (26 letters + 10 numbers + 4 punctuation),
+                                // so 6 columns gives exactly six full rows plus one
+                                // trailing row of 4 -- [SliverGridDelegateWithFixedCrossAxisCount]
+                                // gives every one of those 40 cells the exact same
+                                // width and height regardless of device width (the
+                                // grid divides whatever space is available evenly
+                                // across 6 columns), and forces each [FilterChip]
+                                // to fill its cell rather than sizing to its own
+                                // label, so every chip -- first row or last -- ends
+                                // up identically sized. [mainAxisExtent] is 35%
+                                // taller than the chip's own natural unconstrained
+                                // height (43.2, see the padding comment below) --
+                                // forcing chips into a perfect square read as too
+                                // cramped for a label that's two lines (character
+                                // plus tally number) rather than one (Bill,
+                                // 2026-09-02: "need to be rectangles large enough
+                                // to hold the letter and the tally number").
+                                GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: _gridSlots.length,
+                                  gridDelegate:
+                                      const SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: _crossAxisCount,
+                                        crossAxisSpacing: 8,
+                                        mainAxisSpacing: 8,
+                                        mainAxisExtent: 58.3,
+                                      ),
+                                  itemBuilder: (context, index) {
+                                    final character = _gridSlots[index];
+                                    // A null slot is one of the empty cells
+                                    // [_gridSlots] pads the trailing partial
+                                    // row with to center it (Bill,
+                                    // 2026-09-02: "center the last row of
+                                    // chips by moving them all to the right
+                                    // by one location") -- nothing to render
+                                    // there.
+                                    if (character == null) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    final isSelected = _selected.contains(
+                                      character,
+                                    );
+                                    // A missing entry means never trained
+                                    // (transparent); a present one -- even a 0,
+                                    // for a character that's always been missed
+                                    // -- means it has, and gets colored (see
+                                    // [TrainingScreen._persistCharacterScores]
+                                    // for why presence and value are tracked
+                                    // separately).
+                                    final hasScore = _scores.containsKey(
+                                      character,
+                                    );
+                                    final score = _scores[character] ?? 0;
+                                    final color = hasScore
+                                        ? _heatMapColor(score, _maxScore)
+                                        : Colors.transparent;
+                                    final textColor = _readableTextColor(color);
+                                    final chip = FilterChip(
+                                      label: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            character,
+                                            style: TextStyle(color: textColor),
                                           ),
-                                          text: TextSpan(
-                                            text: '$score',
-                                            style: TextStyle(
-                                              color: textColor,
-                                              fontSize: 10,
+                                          // RichText, not Text -- a bare Text
+                                          // here would make the score digits
+                                          // ambiguous with the digit *chips*
+                                          // ('0'-'9' are themselves characters
+                                          // in [allCharacters]) for any test or
+                                          // tooling that finds chips by their
+                                          // label text.
+                                          RichText(
+                                            textScaler: MediaQuery.textScalerOf(
+                                              context,
+                                            ),
+                                            text: TextSpan(
+                                              text: '$score',
+                                              style: TextStyle(
+                                                color: textColor,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      showCheckmark: false,
+                                      // Trims the chip's own default vertical
+                                      // padding (7 a side) down to 5.6 a
+                                      // side -- 8 horizontal is the
+                                      // (unchanged) default, kept explicit
+                                      // only because [padding] is one
+                                      // EdgeInsets -- for a precise 10%
+                                      // reduction in overall chip height
+                                      // (48 -> 43.2 logical pixels, measured
+                                      // via [tester.getSize] on an 'A' chip)
+                                      // with the width untouched (Bill,
+                                      // 2026-09-02). [shrinkWrap] is required
+                                      // alongside it: Material's default tap
+                                      // target enforces a 48-tall minimum
+                                      // that would otherwise silently
+                                      // re-inflate the chip back to its old
+                                      // height regardless of this padding.
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 5.6,
+                                      ),
+                                      backgroundColor: color,
+                                      selectedColor: color,
+                                      selected: isSelected,
+                                      // A training session's own missed-
+                                      // character auto-flagging never selects
+                                      // a character by itself (see [_selected]'s
+                                      // doc comment) -- [isSelected] here is
+                                      // only ever true for one the learner
+                                      // actually tapped, so the highlight
+                                      // below stays exactly "you picked
+                                      // this."
+                                      onSelected: (selected) {
+                                        setState(() {
+                                          if (selected) {
+                                            _selected.add(character);
+                                          } else {
+                                            _selected.remove(character);
+                                          }
+                                          _autoFlagged.remove(character);
+                                        });
+                                      },
+                                    );
+                                    if (!isSelected) return chip;
+                                    // A selected chip's highlight is painted
+                                    // as a separate overlay exactly matching
+                                    // the chip's own bounds, rather than
+                                    // through [FilterChip.side] (2026-09-02)
+                                    // -- [side] draws its stroke centered on
+                                    // the chip's own shape boundary, which
+                                    // grows the chip's actual layout box by
+                                    // the border width. That growth used to
+                                    // push the old [Wrap] layout into an
+                                    // extra row once enough chips were
+                                    // selected at once (Bill, on-device:
+                                    // "three chips selected and they start
+                                    // wrapping"); the grid cells below are
+                                    // fixed-size regardless, but this overlay
+                                    // approach is kept rather than [side] so
+                                    // the border still can't affect layout.
+                                    // This overlay instead fills exactly the
+                                    // unselected chip's
+                                    // own bounds ([Positioned.fill] inside a
+                                    // [Stack] whose size comes only from the
+                                    // non-positioned [chip] below it) --
+                                    // purely painted, so it can never change
+                                    // layout. No inset is added around the
+                                    // [DecoratedBox]: unlike [BorderSide],
+                                    // [Border.paint] draws each side flush
+                                    // with its own box's edge and extends
+                                    // inward by the stroke width, so the
+                                    // highlight's outer edge lands exactly
+                                    // on the chip's outer edge with no
+                                    // manual half-width compensation needed
+                                    // (Bill, on-device, 2026-09-02: an
+                                    // earlier version that did add that inset
+                                    // -- reasoning from [BorderSide]'s
+                                    // centered-stroke behavior -- left the
+                                    // highlight visibly smaller than the
+                                    // chip). [IgnorePointer] passes taps
+                                    // through to the chip beneath so tapping
+                                    // the highlighted ring still (de)selects
+                                    // it.
+                                    return Stack(
+                                      // [StackFit.expand] rather than the default
+                                      // loose -- a grid tile forces this whole
+                                      // [Stack] to its exact cell size, but [Stack]
+                                      // by default only gives *loose* constraints
+                                      // to a non-positioned child like [chip],
+                                      // which then sizes itself to its own natural
+                                      // (label-driven) width instead of filling
+                                      // the cell -- so a selected chip rendered
+                                      // narrower than an unselected one in the
+                                      // same grid. [StackFit.expand] makes every
+                                      // non-positioned child fill the [Stack]'s
+                                      // size too, keeping selected and unselected
+                                      // chips identically sized.
+                                      fit: StackFit.expand,
+                                      children: [
+                                        chip,
+                                        Positioned.fill(
+                                          key: Key(
+                                            'focus-highlight-$character',
+                                          ),
+                                          child: IgnorePointer(
+                                            child: DecoratedBox(
+                                              decoration: BoxDecoration(
+                                                border: Border.all(
+                                                  color: _selectedBorderColor,
+                                                  width: _selectedBorderWidth,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ],
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 24),
+                                Text(
+                                  'Focusizer ${_selected.length}',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontStyle: FontStyle.italic,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                // Shrinks the slider's default touch-target
+                                // overlay/thumb, and its own reserved top/bottom
+                                // padding (`padding: EdgeInsets.zero`, matching
+                                // [SteppedIntControl]'s identical slider elsewhere
+                                // in the app), so the visible track sits right
+                                // under the label above instead of leaving a gap
+                                // (Bill, on-device, 2026-09-01/02) -- a stock
+                                // [Slider] reserves extra invisible padding around
+                                // its track for the thumb's tap/ripple area.
+                                SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    trackHeight: 3,
+                                    padding: EdgeInsets.zero,
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 8,
                                     ),
-                                    showCheckmark: false,
-                                    // Trims the chip's own default vertical
-                                    // padding (7 a side) down to 5.6 a
-                                    // side -- 8 horizontal is the
-                                    // (unchanged) default, kept explicit
-                                    // only because [padding] is one
-                                    // EdgeInsets -- for a precise 10%
-                                    // reduction in overall chip height
-                                    // (48 -> 43.2 logical pixels, measured
-                                    // via [tester.getSize] on an 'A' chip)
-                                    // with the width untouched (Bill,
-                                    // 2026-09-02). [shrinkWrap] is required
-                                    // alongside it: Material's default tap
-                                    // target enforces a 48-tall minimum
-                                    // that would otherwise silently
-                                    // re-inflate the chip back to its old
-                                    // height regardless of this padding.
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 5.6,
-                                    ),
-                                    backgroundColor: color,
-                                    selectedColor: color,
-                                    selected: isSelected,
-                                    // A training session's own missed-
-                                    // character auto-flagging never selects
-                                    // a character by itself (see [_selected]'s
-                                    // doc comment) -- [isSelected] here is
-                                    // only ever true for one the learner
-                                    // actually tapped, so the highlight
-                                    // below stays exactly "you picked
-                                    // this."
-                                    onSelected: (selected) {
-                                      setState(() {
-                                        if (selected) {
-                                          _selected.add(character);
-                                        } else {
-                                          _selected.remove(character);
-                                        }
-                                        _autoFlagged.remove(character);
-                                      });
-                                    },
-                                  );
-                                  if (!isSelected) return chip;
-                                  // A selected chip's highlight is painted
-                                  // as a separate overlay exactly matching
-                                  // the chip's own bounds, rather than
-                                  // through [FilterChip.side] (2026-09-02)
-                                  // -- [side] draws its stroke centered on
-                                  // the chip's own shape boundary, which
-                                  // grows the chip's actual layout box by
-                                  // the border width. With enough chips
-                                  // selected at once that growth pushed
-                                  // the [Wrap] into an extra row (Bill,
-                                  // on-device: "three chips selected and
-                                  // they start wrapping"), and inflated
-                                  // the whole grid's size once every chip
-                                  // was selected. This overlay instead
-                                  // fills exactly the unselected chip's
-                                  // own bounds ([Positioned.fill] inside a
-                                  // [Stack] whose size comes only from the
-                                  // non-positioned [chip] below it) --
-                                  // purely painted, so it can never change
-                                  // layout. No inset is added around the
-                                  // [DecoratedBox]: unlike [BorderSide],
-                                  // [Border.paint] draws each side flush
-                                  // with its own box's edge and extends
-                                  // inward by the stroke width, so the
-                                  // highlight's outer edge lands exactly
-                                  // on the chip's outer edge with no
-                                  // manual half-width compensation needed
-                                  // (Bill, on-device, 2026-09-02: an
-                                  // earlier version that did add that inset
-                                  // -- reasoning from [BorderSide]'s
-                                  // centered-stroke behavior -- left the
-                                  // highlight visibly smaller than the
-                                  // chip). [IgnorePointer] passes taps
-                                  // through to the chip beneath so tapping
-                                  // the highlighted ring still (de)selects
-                                  // it.
-                                  return Stack(
+                                    overlayShape:
+                                        SliderComponentShape.noOverlay,
+                                  ),
+                                  child: Row(
                                     children: [
-                                      chip,
-                                      Positioned.fill(
-                                        key: Key('focus-highlight-$character'),
-                                        child: IgnorePointer(
-                                          child: DecoratedBox(
-                                            decoration: BoxDecoration(
-                                              border: Border.all(
-                                                color: _selectedBorderColor,
-                                                width: _selectedBorderWidth,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            ),
+                                      IconButton(
+                                        visualDensity: const VisualDensity(
+                                          horizontal: -2,
+                                          vertical: -2,
+                                        ),
+                                        iconSize: 26,
+                                        icon: Icon(
+                                          Icons.remove_circle_outline,
+                                          color: _heatMapRedColor,
+                                        ),
+                                        onPressed: _rankedByScore.isEmpty
+                                            ? null
+                                            : () => _stepFocusSlider(-1),
+                                      ),
+                                      Expanded(
+                                        child: Slider(
+                                          value: _focusSliderValue.clamp(
+                                            0,
+                                            _rankedByScore.length.toDouble(),
                                           ),
+                                          min: 0,
+                                          // A max/divisions of 0 (nothing trained
+                                          // yet, see [_rankedByScore]) would be a
+                                          // degenerate, unusable [Slider] -- fall
+                                          // back to a disabled 0-to-1 slider
+                                          // rather than dividing by zero.
+                                          max: _rankedByScore.isEmpty
+                                              ? 1
+                                              : _rankedByScore.length
+                                                    .toDouble(),
+                                          divisions: _rankedByScore.isEmpty
+                                              ? null
+                                              : _rankedByScore.length,
+                                          onChanged: _rankedByScore.isEmpty
+                                              ? null
+                                              : _onFocusSliderChanged,
                                         ),
                                       ),
+                                      IconButton(
+                                        visualDensity: const VisualDensity(
+                                          horizontal: -2,
+                                          vertical: -2,
+                                        ),
+                                        iconSize: 26,
+                                        icon: Icon(
+                                          Icons.add_circle_outline,
+                                          color: _heatMapGreenColor,
+                                        ),
+                                        onPressed: _rankedByScore.isEmpty
+                                            ? null
+                                            : () => _stepFocusSlider(1),
+                                      ),
                                     ],
-                                  );
-                                },
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        Text(
-                          'Focusizer ${_selected.length}',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontStyle: FontStyle.italic,
-                            fontSize: 12,
-                          ),
-                        ),
-                        // Shrinks the slider's default touch-target
-                        // overlay/thumb, and its own reserved top/bottom
-                        // padding (`padding: EdgeInsets.zero`, matching
-                        // [SteppedIntControl]'s identical slider elsewhere
-                        // in the app), so the visible track sits right
-                        // under the label above instead of leaving a gap
-                        // (Bill, on-device, 2026-09-01/02) -- a stock
-                        // [Slider] reserves extra invisible padding around
-                        // its track for the thumb's tap/ripple area.
-                        SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 3,
-                            padding: EdgeInsets.zero,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 8,
-                            ),
-                            overlayShape: SliderComponentShape.noOverlay,
-                          ),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                visualDensity: const VisualDensity(
-                                  horizontal: -2,
-                                  vertical: -2,
-                                ),
-                                iconSize: 26,
-                                icon: Icon(
-                                  Icons.remove_circle_outline,
-                                  color: _heatMapRedColor,
-                                ),
-                                onPressed: _rankedByScore.isEmpty
-                                    ? null
-                                    : () => _stepFocusSlider(-1),
-                              ),
-                              Expanded(
-                                child: Slider(
-                                  value: _focusSliderValue.clamp(
-                                    0,
-                                    _rankedByScore.length.toDouble(),
                                   ),
-                                  min: 0,
-                                  // A max/divisions of 0 (nothing trained
-                                  // yet, see [_rankedByScore]) would be a
-                                  // degenerate, unusable [Slider] -- fall
-                                  // back to a disabled 0-to-1 slider
-                                  // rather than dividing by zero.
-                                  max: _rankedByScore.isEmpty
-                                      ? 1
-                                      : _rankedByScore.length.toDouble(),
-                                  divisions: _rankedByScore.isEmpty
-                                      ? null
-                                      : _rankedByScore.length,
-                                  onChanged: _rankedByScore.isEmpty
-                                      ? null
-                                      : _onFocusSliderChanged,
                                 ),
-                              ),
-                              IconButton(
-                                visualDensity: const VisualDensity(
-                                  horizontal: -2,
-                                  vertical: -2,
-                                ),
-                                iconSize: 26,
-                                icon: Icon(
-                                  Icons.add_circle_outline,
-                                  color: _heatMapGreenColor,
-                                ),
-                                onPressed: _rankedByScore.isEmpty
-                                    ? null
-                                    : () => _stepFocusSlider(1),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // In-column, directly under the Focusizer, rather
-                        // than detached at the physical bottom of the
-                        // screen (e.g. via `bottomNavigationBar`) -- Bill
-                        // found the detached placement read as floating
-                        // in the middle of the screen whenever the
-                        // content above didn't fill the available height,
-                        // since [Center] above vertically centers this
-                        // whole column (2026-08-31). Hidden until there's
-                        // at least one recorded attempt (see
-                        // [_correctPercentage]).
-                        if (_correctPercentage != null) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            '$_correctPercentage% Correct',
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ],
-                    )
-                  : const Center(child: CircularProgressIndicator()),
-            ),
-          ),
+                                // In-column, directly under the Focusizer, rather
+                                // than detached at the physical bottom of the
+                                // screen (e.g. via `bottomNavigationBar`) -- Bill
+                                // found the detached placement read as floating
+                                // in the middle of the screen whenever the
+                                // content above didn't fill the available height,
+                                // since [Center] above vertically centers this
+                                // whole column (2026-08-31). Hidden until there's
+                                // at least one recorded attempt (see
+                                // [_correctPercentage]).
+                                if (_correctPercentage != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '$_correctPercentage% Correct',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ],
+                            )
+                          : const Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
