@@ -185,6 +185,40 @@ void main() {
     );
   });
 
+  testWidgets('Delete on one session does nothing until confirmed in the '
+      'dialog', (tester) async {
+    final store = _FakeTrainingLogStore([earlier, later]);
+    await tester.pumpWidget(wrap(TrainingLogScreen(store: store)));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('delete-session-later')));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this session?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('08/20/26'), findsOneWidget);
+    expect(find.text('08/21/26'), findsOneWidget);
+    expect(store.saved, [earlier, later]);
+  });
+
+  testWidgets('Delete, once confirmed, removes only that session and '
+      'persists it -- the rest of the log is untouched', (tester) async {
+    final store = _FakeTrainingLogStore([earlier, later]);
+    await tester.pumpWidget(wrap(TrainingLogScreen(store: store)));
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('delete-session-later')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('08/21/26'), findsNothing);
+    expect(find.text('08/20/26'), findsOneWidget);
+    expect(store.saved, [earlier]);
+  });
+
   testWidgets('Export hands the built CSV to the injected export function', (
     tester,
   ) async {

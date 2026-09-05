@@ -11,8 +11,9 @@ import '../training/training_session_record.dart';
 /// The training log (morse_icr_spec.md section 21): every completed
 /// session's date, time, duration, and active character set/problem-
 /// character summary, each learner-editable with free-form notes,
-/// cumulative training time, a Clear action (with confirmation), and a
-/// CSV Export via the OS share sheet.
+/// cumulative training time, a per-row Delete action (with confirmation)
+/// alongside the whole-log Clear action (also confirmed), and a CSV
+/// Export via the OS share sheet.
 class TrainingLogScreen extends StatefulWidget {
   /// [exportCsv] lets tests substitute a fake so they don't have to
   /// exercise the real `share_plus` platform channel, which -- like
@@ -110,6 +111,37 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
     await widget._exportCsv(buildTrainingLogCsv(_records), origin);
   }
 
+  Future<void> _deleteRecord(BuildContext context, String id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete this session?'),
+        content: const Text(
+          'This permanently deletes this recorded session. This cannot be '
+          'undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final updated = [
+      for (final record in _records)
+        if (record.id != id) record,
+    ];
+    await widget.store.save(updated);
+    if (!mounted) return;
+    setState(() => _records = updated);
+  }
+
   Future<void> _updateNotes(int index, String notes) async {
     setState(() {
       _records = [
@@ -176,6 +208,8 @@ class _TrainingLogScreenState extends State<TrainingLogScreen> {
                                 record: record,
                                 onNotesChanged: (notes) =>
                                     _updateNotes(storageIndex, notes),
+                                onDelete: () =>
+                                    _deleteRecord(context, record.id),
                               );
                             },
                           ),
@@ -192,10 +226,12 @@ class _SessionRow extends StatefulWidget {
     required super.key,
     required this.record,
     required this.onNotesChanged,
+    required this.onDelete,
   });
 
   final TrainingSessionRecord record;
   final ValueChanged<String> onNotesChanged;
+  final VoidCallback onDelete;
 
   @override
   State<_SessionRow> createState() => _SessionRowState();
@@ -228,6 +264,24 @@ class _SessionRowState extends State<_SessionRow> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Own top row, right-aligned, rather than folded into the
+        // Date/Time/Duration row below -- that row already splits its
+        // width evenly three ways (spaceEvenly, no Expanded), so a fourth
+        // item would just crowd the existing cells rather than sitting
+        // clearly apart from them as its own action.
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            key: Key('delete-session-${record.id}'),
+            icon: const Icon(Icons.delete_outline, size: 20),
+            tooltip: 'Delete',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: widget.onDelete,
+          ),
+        ),
+        const SizedBox(height: 4),
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
