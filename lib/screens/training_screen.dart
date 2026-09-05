@@ -209,10 +209,17 @@ class _TrainingScreenState extends State<TrainingScreen>
   int _sessionStartExtraGapMs = 0;
   bool _voiceEnabled = true;
   bool _voicePreparing = false;
-  // Populated once [TtsAnswerSpeaker.ready] resolves, alongside
-  // [_voicePreparing] going false -- see initState. Empty (rather than
-  // awaited synchronously) until then, same "momentarily-stale" pattern
-  // as everything else seeded from [_appSettingsStore]'s async load.
+  // Populated once [TtsAnswerSpeaker.voiceSelectionReady] resolves,
+  // alongside [_voicePreparing] going false -- see initState. Not
+  // [TtsAnswerSpeaker.ready] (2026-09-05): that additionally waits on
+  // every character finishing pre-render, which under a slow/glitchy
+  // voice (Samantha (Enhanced) on this device/iOS version) left this
+  // list empty -- and the Settings "Speech Voice" picker stuck showing
+  // "Auto" -- for as long as that took, sometimes minutes, even though
+  // which voice to use had already been decided almost immediately.
+  // Empty (rather than awaited synchronously) until then, same
+  // "momentarily-stale" pattern as everything else seeded from
+  // [_appSettingsStore]'s async load.
   List<TtsVoiceOption> _availableVoices = [];
   bool _recognitionEnabled = true;
   bool _lastResponseCorrect = false;
@@ -365,12 +372,18 @@ class _TrainingScreenState extends State<TrainingScreen>
     });
     final answerSpeaker = _answerSpeaker;
     if (answerSpeaker is TtsAnswerSpeaker) {
-      // Pre-rendering every character's spoken word (section 36) takes
-      // a moment, most noticeably right after the learner installs a
-      // higher-quality voice -- surface that instead of leaving early
-      // announcements silently slow or missing.
+      // Voice selection (which installed voice will actually speak)
+      // settles quickly; watching that alone -- not the much slower
+      // [TtsAnswerSpeaker.ready], which additionally waits on every
+      // character finishing pre-render -- is what keeps this spinner and
+      // the Settings voice picker responsive even when pre-rendering
+      // itself is slow or repeatedly hitting the known AVSpeechSynthesizer
+      // hang under a voice like Samantha (Enhanced) (morse_icr project
+      // memory). Pre-rendering keeps running in the background regardless
+      // of this; [speak] already falls back to live synthesis for
+      // whatever isn't cached yet.
       _voicePreparing = true;
-      answerSpeaker.ready.whenComplete(() {
+      answerSpeaker.voiceSelectionReady.whenComplete(() {
         if (mounted) {
           setState(() {
             _voicePreparing = false;

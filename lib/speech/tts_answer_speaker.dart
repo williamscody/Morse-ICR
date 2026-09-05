@@ -114,15 +114,36 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   };
 
   /// Resolves once setup (voice selection, audio session configuration)
-  /// and pre-rendering have finished, so UI can show a "preparing"
-  /// indicator in the meantime -- most noticeable right after the
-  /// learner installs a higher-quality voice (section 36), since that
-  /// triggers a fresh render pass for every character.
+  /// and pre-rendering have finished. Nothing outside this class actually
+  /// waits on the *pre-rendering* half any more (see
+  /// [voiceSelectionReady]) -- this is kept for callers that genuinely
+  /// need every character cached, and because [_prerenderCharacters]'s
+  /// own failure tolerance means this still resolves in bounded time
+  /// even when pre-rendering never fully succeeds.
   Future<void> get ready => _ready;
 
+  /// Resolves once voice selection (which installed voice will actually
+  /// speak) is settled -- well before [ready], which additionally waits
+  /// on every character's audio being pre-rendered. Settings' "Speech
+  /// Voice" picker and its "Preparing voice…" spinner watch this, not
+  /// [ready] (2026-09-05): an earlier version gated both on [ready], so
+  /// picking a voice that's slow or intermittently hangs mid-synthesis
+  /// (Samantha (Enhanced) on this device/iOS version -- see morse_icr
+  /// project memory) left the picker stuck showing "Auto" and the
+  /// spinner running for as long as pre-rendering the whole ~40-character
+  /// table took, sometimes minutes, even though the voice to actually
+  /// speak with had already been settled in the first second or two.
+  /// Pre-rendering keeps running in the background regardless; [speak]
+  /// already tolerates a character that isn't cached yet by falling back
+  /// to live synthesis.
+  Future<void> get voiceSelectionReady => _voiceSelectionReady.future;
+
+  final Completer<void> _voiceSelectionReady = Completer<void>();
+
   /// Every English-locale voice installed on this device, for the
-  /// section-35 "Voice" picker -- empty before [ready] resolves, or if
-  /// voice discovery fails (see [_loadAvailableVoices]'s own try/catch).
+  /// section-35 "Voice" picker -- empty before [voiceSelectionReady]
+  /// resolves, or if voice discovery fails (see [_loadAvailableVoices]'s
+  /// own try/catch).
   List<TtsVoiceOption> get availableVoices =>
       List.unmodifiable(_availableVoices);
 
@@ -143,6 +164,9 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
       // against each other on every play() call.
       await _selectVoice();
     }
+    // Deliberately before _prerenderAll(), not after -- see
+    // [voiceSelectionReady]'s own doc comment for why.
+    if (!_voiceSelectionReady.isCompleted) _voiceSelectionReady.complete();
 
     await _prerenderAll();
   }
@@ -240,10 +264,40 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   /// which voice [_useHighestQualityVoice] picks, naturally invalidates
   /// any stale cached file instead of it silently continuing to play the
   /// old pronunciation/voice.
-  Future<void> _prerenderAll() async {
+  Future<void> _prerenderAll() =>
+      _prerenderCharacters(morseCodeTable.keys.toList());
+
+  // A single bulk retry pass over whatever failed the first time, rather
+  // than retrying each character in place before moving to the next
+  // (2026-09-05) -- the AVSpeechSynthesizer hang [_prerenderCharacter]
+  // works around below is intermittent, not tied to a specific character
+  // or even a small handful of them: on-device, a learner picked Samantha
+  // (Enhanced) and force-quit before its very first (full-table, nothing
+  // cached yet) pre-render pass finished, so on relaunch most of the
+  // table still needed synthesizing -- and Samantha hangs (or is just
+  // plain slow -- a large neural voice rendering ~40 short files
+  // sequentially, with no per-character concurrency, adds up regardless
+  // of hangs) on enough of them that retrying in place (an earlier
+  // version of this fix tried 3 attempts per character before moving on)
+  // multiplied an already-slow pass badly. Retrying the whole batch of
+  // failures exactly once instead mirrors the one workaround already
+  // proven to reliably recover (switching to another voice and back,
+  // which is just one more full [_prerenderAll] pass) while bounding the
+  // added worst case to roughly 1 extra pass, however many characters
+  // happen to be affected, not 2-3 extra passes *per affected character*.
+  // This alone did not fix Settings' "Voice" picker reading as hung,
+  // though -- see [voiceSelectionReady]'s doc comment for the actual fix,
+  // which stopped that picker waiting on this slow method at all.
+  Future<void> _prerenderCharacters(List<String> characters) async {
     try {
       final directory = await getApplicationDocumentsDirectory();
-      for (final character in morseCodeTable.keys) {
+      final failed = <String>[];
+      for (final character in characters) {
+        if (!await _prerenderCharacter(character, directory)) {
+          failed.add(character);
+        }
+      }
+      for (final character in failed) {
         await _prerenderCharacter(character, directory);
       }
     } catch (_) {
@@ -252,7 +306,11 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     }
   }
 
-  Future<void> _prerenderCharacter(
+  /// Renders and caches one character, returning whether it ended up
+  /// cached -- callers (see [_prerenderCharacters]) use a `false` to
+  /// decide what's worth a retry pass, rather than this method retrying
+  /// internally (see that method's own doc comment for why).
+  Future<bool> _prerenderCharacter(
     String character, [
     Directory? directory,
   ]) async {
@@ -296,55 +354,65 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
         // before the hang. Left alone, that truncated fragment -- "A"
         // played back as a short click, not the full word -- would get
         // cached below exactly like a real, complete render. Deleting
-        // it here instead sends this character down the same live-
-        // synthesis fallback path (with its own matching timeout, see
-        // [_speak]) as a character that failed to render at all.
+        // it here instead sends this character down the same too-short
+        // check below as a render that produced nothing at all.
         await file.delete();
       }
     }
-    if (await file.exists()) {
-      final rendered = await file.readAsBytes();
-      // flutter_tts's synthesizeToFile writes 32-bit float PCM at
-      // AVSpeechSynthesizer's own native sample rate on iOS (see
-      // convertToPcm16Wav's doc comment) -- converting once here,
-      // rather than leaving playback to handle that format directly,
-      // is what fixed TTS answer audio's play() taking 600-1000ms+ to
-      // be acknowledged regardless of clip length or whether the phone
-      // was locked (morse_icr project memory). A character whose
-      // format this wasn't written to handle (e.g. a future flutter_tts
-      // version changing its output format) is left uncached rather
-      // than caching something unusable for splicing into a turn
-      // buffer -- speak() falls back to live synthesis for it instead.
-      try {
-        final wav = convertToPcm16Wav(rendered, targetSampleRate: _sampleRate);
-        final samples = trimTrailingSilence(readPcm16Samples(wav));
-        // Guards against a *previous* run's truncated file, not just a
-        // fresh one this call just avoided caching above -- the file
-        // this reads back was already sitting on disk (this whole
-        // branch only runs when `!await file.exists()` was false coming
-        // in, i.e. some earlier prerender pass wrote it, possibly
-        // before this truncation guard existed at all). Confirmed
-        // on-device (2026-09-02): a single-vowel word like "a" (see
-        // [spokenNames]) is short even fully spoken, but a genuinely
-        // truncated click fragment measured well under this floor --
-        // 100ms is comfortably below every real spoken character's own
-        // length while still well above a bare onset transient.
-        // Discarding it here (not just at synthesis time) makes this
-        // self-healing: a stale corrupt file from before this check
-        // existed gets caught and cleaned up the next time this
-        // character's audio is loaded, not just newly-created ones.
-        if (samples.length < (_sampleRate * 0.1).round()) {
-          logDebug(
-            'prerender($character): cached file too short '
-            '(${samples.length} samples), discarding',
-          );
-          await file.delete();
-          return;
-        }
-        _cachedAudio[character] = samples;
-      } on FormatException catch (e) {
-        logDebug('prerender($character): conversion failed: $e');
+    if (!await file.exists()) {
+      // Nothing was written at all (a hang with zero buffers flushed
+      // before the timeout) -- report failure so [_prerenderCharacters]
+      // can retry it in its one bulk pass, rather than falling straight
+      // through to [_speak]'s live-synthesis fallback for the rest of
+      // this app session.
+      return false;
+    }
+    final rendered = await file.readAsBytes();
+    // flutter_tts's synthesizeToFile writes 32-bit float PCM at
+    // AVSpeechSynthesizer's own native sample rate on iOS (see
+    // convertToPcm16Wav's doc comment) -- converting once here,
+    // rather than leaving playback to handle that format directly,
+    // is what fixed TTS answer audio's play() taking 600-1000ms+ to
+    // be acknowledged regardless of clip length or whether the phone
+    // was locked (morse_icr project memory). A character whose
+    // format this wasn't written to handle (e.g. a future flutter_tts
+    // version changing its output format) is left uncached rather
+    // than caching something unusable for splicing into a turn
+    // buffer -- speak() falls back to live synthesis for it instead.
+    try {
+      final wav = convertToPcm16Wav(rendered, targetSampleRate: _sampleRate);
+      final samples = trimTrailingSilence(readPcm16Samples(wav));
+      // Guards against a *previous* run's truncated file, not just a
+      // fresh one this call just avoided caching above -- the file
+      // this reads back was already sitting on disk (this whole
+      // branch only runs when `!await file.exists()` was false coming
+      // in, i.e. some earlier prerender pass wrote it, possibly
+      // before this truncation guard existed at all). Confirmed
+      // on-device (2026-09-02): a single-vowel word like "a" (see
+      // [spokenNames]) is short even fully spoken, but a genuinely
+      // truncated click fragment measured well under this floor --
+      // 100ms is comfortably below every real spoken character's own
+      // length while still well above a bare onset transient.
+      // Discarding it here (not just at synthesis time) makes this
+      // self-healing: a stale corrupt file from before this check
+      // existed gets caught and cleaned up the next time this
+      // character's audio is loaded, not just newly-created ones.
+      if (samples.length < (_sampleRate * 0.1).round()) {
+        logDebug(
+          'prerender($character): cached file too short '
+          '(${samples.length} samples), discarding',
+        );
+        await file.delete();
+        return false;
       }
+      _cachedAudio[character] = samples;
+      return true;
+    } on FormatException catch (e) {
+      // A format problem will look identical on retry -- report failure
+      // but leave the (unusable) file in place; a retry would just hit
+      // the same conversion failure again.
+      logDebug('prerender($character): conversion failed: $e');
+      return false;
     }
   }
 
@@ -372,14 +440,7 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
       }
       this.speakPeriodAsDot = speakPeriodAsDot;
       this.speakSlashAsStroke = speakSlashAsStroke;
-      try {
-        final directory = await getApplicationDocumentsDirectory();
-        await _prerenderCharacter('.', directory);
-        await _prerenderCharacter('/', directory);
-      } catch (_) {
-        // Same tolerance as _prerenderAll -- speak() falls back to live
-        // synthesis for anything that fails to (re-)cache.
-      }
+      await _prerenderCharacters(const ['.', '/']);
     });
   }
 
