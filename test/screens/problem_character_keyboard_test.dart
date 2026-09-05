@@ -409,9 +409,12 @@ void main() {
     await tester.tap(find.widgetWithText(FilterChip, 'K'));
     await tester.pump();
     expect(isHighlighted(tester, 'K'), isTrue);
-    // A fixed, vivid color/width (2026-09-02) -- not the theme's own
-    // primary -- so the selection highlight reads clearly against any
-    // heat-map fill in both light and dark mode.
+    // A fixed, vivid width (2026-09-02) -- not the theme's own primary --
+    // so the selection highlight reads clearly against any heat-map fill
+    // in both light and dark mode. The color itself became theme-aware
+    // (2026-09-04): [wrap]'s default light theme should get the dark
+    // indigo, since a pale cyan (still used in dark mode, see the
+    // dedicated test below) read too close to a light background.
     final decoratedBox = tester.widget<DecoratedBox>(
       find.descendant(
         of: find.byKey(const Key('focus-highlight-K')),
@@ -419,7 +422,7 @@ void main() {
       ),
     );
     final border = (decoratedBox.decoration as BoxDecoration).border as Border;
-    expect(border.top.color, Colors.cyanAccent);
+    expect(border.top.color, Colors.indigo.shade900);
     expect(border.top.width, 4.0);
     expect(
       tester
@@ -438,6 +441,35 @@ void main() {
       _heatMapGreen,
     );
   });
+
+  testWidgets(
+    "a selected chip's highlight uses the dark-mode cyan, not the "
+    'light-mode indigo, when the device theme is dark',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: Brightness.dark),
+          home: ProblemCharacterKeyboard(
+            store: _FakeProblemCharacterStore(null, const {}, {'K': 5}),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.widgetWithText(FilterChip, 'K'));
+      await tester.pump();
+
+      final decoratedBox = tester.widget<DecoratedBox>(
+        find.descendant(
+          of: find.byKey(const Key('focus-highlight-K')),
+          matching: find.byType(DecoratedBox),
+        ),
+      );
+      final border =
+          (decoratedBox.decoration as BoxDecoration).border as Border;
+      expect(border.top.color, Colors.cyanAccent);
+    },
+  );
 
   testWidgets(
     'a character that is both a previously-saved (manual) selection and '

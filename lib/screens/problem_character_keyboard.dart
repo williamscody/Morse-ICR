@@ -371,6 +371,19 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                         children: [
                                           Text(
                                             character,
+                                            // 'W' is noticeably wider than
+                                            // every other single-character
+                                            // label -- without these, its
+                                            // glyph sat right at the edge of
+                                            // the available label width and
+                                            // rendered with its trailing edge
+                                            // clipped off, reading as a faint,
+                                            // partial letter rather than
+                                            // wrapping (Bill, on-device,
+                                            // 2026-09-04). Same fix as the
+                                            // tally [RichText] below.
+                                            softWrap: false,
+                                            overflow: TextOverflow.visible,
                                             style: TextStyle(color: textColor),
                                           ),
                                           // RichText, not Text -- a bare Text
@@ -384,6 +397,21 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                             textScaler: MediaQuery.textScalerOf(
                                               context,
                                             ),
+                                            // A tally in the high teens/twenties
+                                            // is exactly as wide as the chip's
+                                            // available label width for some
+                                            // digit pairs but not others (font
+                                            // metrics vary per digit) --
+                                            // without these, [RichText]'s
+                                            // default wrapping would break
+                                            // right between the two digits,
+                                            // pushing the second one out past
+                                            // the chip's own rounded bounds
+                                            // instead of keeping the tally on
+                                            // one line.
+                                            softWrap: false,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.visible,
                                             text: TextSpan(
                                               text: '$score',
                                               style: TextStyle(
@@ -460,7 +488,7 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                     // unselected chip's
                                     // own bounds ([Positioned.fill] inside a
                                     // [Stack] whose size comes only from the
-                                    // non-positioned [chip] below it) --
+                                    // non-positioned [chip] above it) --
                                     // purely painted, so it can never change
                                     // layout. No inset is added around the
                                     // [DecoratedBox]: unlike [BorderSide],
@@ -476,9 +504,28 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                     // centered-stroke behavior -- left the
                                     // highlight visibly smaller than the
                                     // chip). [IgnorePointer] passes taps
-                                    // through to the chip beneath so tapping
+                                    // through to the chip below so tapping
                                     // the highlighted ring still (de)selects
-                                    // it.
+                                    // it. Painted last (the front layer),
+                                    // on top of [chip] -- a brief attempt at
+                                    // the opposite order (2026-09-04, to keep
+                                    // the ring from cutting across tally text
+                                    // that spilled past the chip's own
+                                    // bounds) instead left the ring looking
+                                    // "too thin" top and bottom: the chip's
+                                    // own Material shape is more rounded at
+                                    // its left/right ends than this ring's
+                                    // fixed 8px corner radius, so with the
+                                    // opaque chip on top it covered nearly
+                                    // all of the ring except slivers peeking
+                                    // out near the corners (Bill, on-device).
+                                    // That spill is now prevented at the
+                                    // source instead (the [RichText] above no
+                                    // longer wraps), so the ring can safely
+                                    // go back to being the top layer, drawing
+                                    // a clean, uniform 4px border on all four
+                                    // sides regardless of the chip's own
+                                    // shape underneath.
                                     return Stack(
                                       // [StackFit.expand] rather than the default
                                       // loose -- a grid tile forces this whole
@@ -504,7 +551,9 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                             child: DecoratedBox(
                                               decoration: BoxDecoration(
                                                 border: Border.all(
-                                                  color: _selectedBorderColor,
+                                                  color: _selectedBorderColor(
+                                                    context,
+                                                  ),
                                                   width: _selectedBorderWidth,
                                                 ),
                                                 borderRadius:
@@ -702,7 +751,22 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   // pink, tried first, still read too close to red for Bill on-device --
   // so it stays legible against any chip color; a bit thicker than the
   // old 2.5 for the same reason.
-  static const _selectedBorderColor = Colors.cyanAccent;
+  //
+  // Cyan alone stopped being enough once this ring also had to read
+  // against the screen's own light-mode background (2026-09-04, Bill:
+  // "light teal color is too hard to differentiate from the light
+  // background") -- a pale, unsaturated cyan sits too close to an
+  // off-white background even though it still pops against a dark one.
+  // Dark mode keeps the original cyan; light mode switches to a deep
+  // indigo, which is both far darker than the light background and, on
+  // the hue wheel, still well clear of every heat-map color from red
+  // through green.
+  Color _selectedBorderColor(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? Colors.cyanAccent
+        : Colors.indigo.shade900;
+  }
+
   static const _selectedBorderWidth = 4.0;
 
   // Keeps the character and its score legible against any heat-map
