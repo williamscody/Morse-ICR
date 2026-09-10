@@ -35,6 +35,15 @@ private const val RECOGNITION_SOUND_CHANNEL = "morse_icr/recognition_sound"
 // package for that.
 private const val NOTIFICATION_PERMISSION_CHANNEL = "morse_icr/notification_permission"
 
+// Matches bluetooth_permission.dart's own channel name and single
+// method -- the BLUETOOTH_CONNECT runtime permission (Android 12+/API
+// 31+) package:speech_to_text's own native Kotlin side already needs to
+// switch a connected Bluetooth headset into SCO/voice-recognition mode
+// (SpeechToTextPlugin.kt's optionallyStartBluetooth), but silently
+// no-ops without it. No dedicated permission package, same reasoning as
+// NOTIFICATION_PERMISSION_CHANNEL above.
+private const val BLUETOOTH_PERMISSION_CHANNEL = "morse_icr/bluetooth_permission"
+
 // AudioServiceActivity (a thin FlutterActivity subclass from
 // package:audio_service) points this activity at the same FlutterEngine
 // audio_service's own foreground service hosts, rather than creating a
@@ -97,6 +106,42 @@ class MainActivity : AudioServiceActivity() {
                     // immediately rather than waiting on
                     // onRequestPermissionsResult for a grant/denial this
                     // caller doesn't act on either way.
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            BLUETOOTH_PERMISSION_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "requestBluetoothPermission" -> {
+                    // The permission doesn't exist before API 31 --
+                    // BluetoothHeadset access was ungated (covered by the
+                    // older, install-time BLUETOOTH/BLUETOOTH_ADMIN
+                    // permissions) there, nothing to request.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        val alreadyGranted = ContextCompat.checkSelfPermission(
+                            this,
+                            Manifest.permission.BLUETOOTH_CONNECT,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (!alreadyGranted) {
+                            ActivityCompat.requestPermissions(
+                                this,
+                                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+                                0,
+                            )
+                        }
+                    }
+                    // Fire-and-forget, same reasoning as
+                    // requestNotificationPermission above -- a grant
+                    // shown via this dialog isn't picked up by
+                    // speech_to_text's own native side until its *next*
+                    // initialize() call (it only checks
+                    // ContextCompat.checkSelfPermission once, on that
+                    // call), typically the following training session
+                    // rather than this one.
                     result.success(null)
                 }
                 else -> result.notImplemented()

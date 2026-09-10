@@ -27,6 +27,25 @@ class SpeechToTextResponseListener
   ResponseCallback? _onRecognized;
   bool _shouldBeListening = false;
 
+  // Throttles [_onStatus]'s auto-restart -- confirmed on-device (Moto G
+  // Play 2024, Bluetooth headset connected, 2026-09-08): the native
+  // recognizer can fail instantly and repeatedly (status
+  // listening -> notListening/done, error=error_client, over and over)
+  // with each restart itself just re-triggering the same failure before
+  // anything downstream (the recognizer service, or the Bluetooth SCO
+  // link package:speech_to_text's own native side tries to (re)start
+  // around every listen session) has any chance to actually settle --
+  // observed at roughly one restart every ~9ms, thousands of times in a
+  // row, zero results the entire session, pegging the CPU and flooding
+  // the log the whole time. A restart within [_minRestartInterval] of
+  // the previous one's start is delayed to let that gap elapse instead
+  // of firing immediately, giving whatever's actually unstable a real
+  // chance to recover between attempts; this doesn't address whatever
+  // that deeper cause is, only stops the thrashing itself.
+  static const _minRestartInterval = Duration(milliseconds: 300);
+  DateTime? _lastListenStartedAt;
+  Timer? _restartCooldownTimer;
+
   // [OnsetDetectingResponseListener.captureResponseWindow] results, each
   // captured the instant [_onSoundLevel] detects a speech onset and
   // consumed by the next [_onResult] call that actually matches that
@@ -174,7 +193,26 @@ class SpeechToTextResponseListener
     _onRecognized = onRecognized;
     _shouldBeListening = true;
     await RecognitionSoundMuter.mute();
-    final available = await _speechToText.initialize(onStatus: _onStatus);
+    final available = await _speechToText.initialize(
+      onStatus: _onStatus,
+      onError: (error) => logDebug('speech_to_text: error=$error'),
+      // Confirmed on-device (Moto G Play 2024, Bluetooth headset
+      // connected, 2026-09-08): package:speech_to_text's own native
+      // Bluetooth SCO handling (BluetoothHeadset.startVoiceRecognition,
+      // gated on the BLUETOOTH_CONNECT permission -- see that
+      // permission's own AndroidManifest.xml comment) made recognition
+      // reliability *worse*, not better, on this device/headset --
+      // every single listen attempt failed instantly with
+      // error_client once that permission was granted and the plugin's
+      // own Bluetooth switching became active, a 100% failure rate for
+      // the whole session, vs. the intermittent (sometimes actually
+      // working) failures seen before that permission existed. This
+      // option disables just that switching behavior (the permission
+      // itself stays declared/granted -- harmless, and worth keeping in
+      // case a future device/headset combination is different), falling
+      // back to whatever the OS does by default for mic input instead.
+      options: [SpeechToText.androidNoBluetooth],
+    );
     // Logged (2026-08-28) after an on-device session (35WPM/500ms, app
     // presumably backgrounded overnight beforehand) produced *zero*
     // `heard`/onset/release log lines for its entire duration -- Morse
@@ -225,6 +263,8 @@ class SpeechToTextResponseListener
   Future<void> stopListening() async {
     _shouldBeListening = false;
     _onRecognized = null;
+    _restartCooldownTimer?.cancel();
+    _restartCooldownTimer = null;
     try {
       await _speechToText.stop();
     } finally {
@@ -282,6 +322,7 @@ class SpeechToTextResponseListener
     // take -- measured on-device, results otherwise arrived 700ms-1.5s
     // after the speech that produced them, well past any recognition
     // window a fast-paced training loop can afford to wait.
+    _lastListenStartedAt = DateTime.now();
     try {
       await _speechToText.listen(
         onResult: _onResult,
@@ -312,8 +353,26 @@ class SpeechToTextResponseListener
     if (_shouldBeListening &&
         (status == SpeechToText.doneStatus ||
             status == SpeechToText.notListeningStatus)) {
-      unawaited(_listen());
+      _scheduleRestart();
     }
+  }
+
+  void _scheduleRestart() {
+    _restartCooldownTimer?.cancel();
+    final lastStart = _lastListenStartedAt;
+    final elapsed = lastStart == null
+        ? _minRestartInterval
+        : DateTime.now().difference(lastStart);
+    if (elapsed >= _minRestartInterval) {
+      unawaited(_listen());
+      return;
+    }
+    final wait = _minRestartInterval - elapsed;
+    logDebug('speech_to_text: restart throttled, waiting ${wait.inMilliseconds}ms');
+    _restartCooldownTimer = Timer(wait, () {
+      _restartCooldownTimer = null;
+      if (_shouldBeListening) unawaited(_listen());
+    });
   }
 
   // Runs on both partial and final results (package:speech_to_text

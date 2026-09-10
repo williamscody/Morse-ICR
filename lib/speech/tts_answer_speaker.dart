@@ -421,8 +421,28 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   // name; includes a hash of the spoken text and chosen voice so a
   // changed spelling or a newly installed higher-quality voice gets a
   // new file name instead of reusing a stale cached recording.
+  //
+  // Deliberately not Object.hash/String.hashCode (confirmed on-device,
+  // Moto G Play 2024): Dart randomizes those per isolate to resist
+  // hash-flooding, so the exact same character+voice gets a *different*
+  // file name on every single app launch. That silently defeated this
+  // whole cache -- every launch saw its own previous files as
+  // nonexistent and re-synthesized all ~40 characters from scratch
+  // (roughly 10s of dead air before any spoken answer or Stop could
+  // work), never actually erroring so nothing surfaced it before now.
+  // FNV-1a is a plain deterministic content hash, stable across runs.
   String _fileNameFor(String character, String spokenText) =>
-      'spoken_${character.codeUnitAt(0)}_${Object.hash(spokenText, _voiceIdentifier)}.wav';
+      'spoken_${character.codeUnitAt(0)}_'
+      '${_stableHash('$spokenText $_voiceIdentifier')}.wav';
+
+  static int _stableHash(String input) {
+    var hash = 0x811c9dc5;
+    for (final byte in input.codeUnits) {
+      hash ^= byte;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash;
+  }
 
   /// Updates which spoken form "." and "/" use going forward (section
   /// 35), re-rendering just those two characters -- everything else

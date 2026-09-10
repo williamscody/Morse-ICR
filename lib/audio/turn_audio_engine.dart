@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data' show Int16List;
 
 import 'package:just_audio/just_audio.dart';
 
@@ -6,6 +7,7 @@ import '../debug_log.dart';
 import '../morse/morse_event.dart';
 import '../speech/answer_speaker.dart';
 import 'in_memory_audio_source.dart';
+import 'pcm16_wav.dart';
 import 'tone_synthesizer.dart';
 import 'turn_player.dart';
 import 'turn_renderer.dart';
@@ -364,7 +366,68 @@ class TurnAudioEngine implements TurnPlayer {
     _player = AudioPlayer(handleAudioSessionActivation: false);
     _preparedPlayer = null;
     _preparedTiming = null;
+    _warmedUp = false;
     await old.dispose();
+  }
+
+  // Guards [warmUp] to only actually run once per [_player] instance --
+  // it's specifically that instance's cold-start latency being worked
+  // around (see [warmUp]'s own doc comment), so a second Start against
+  // an already-warm player would just be 100ms of pointless silence.
+  // Reset alongside [_player] itself in [_resetPlayer], since a freshly
+  // (re)created player is cold again.
+  bool _warmedUp = false;
+
+  /// Plays a brief, silent buffer through [_player] and waits for it to
+  /// actually finish -- call this once, right after the audio session is
+  /// activated and before the very first real [playTurn], as an attempt
+  /// to absorb any cold-start latency the platform audio pipeline has.
+  ///
+  /// Investigated on-device (Moto G Play 2024, 2026-09-08) after the
+  /// very first character played after a fresh app launch was reported
+  /// as "TTS plays before Morse" -- every turn is one single pre-mixed
+  /// buffer (Morse tone, then silence, then the spliced-in spoken
+  /// answer -- see this class's own doc comment), played with one
+  /// play() call, so there's no code path that could actually reorder
+  /// them, and this app's own turn-to-turn timers are all scheduled
+  /// relative to when play() was *issued*, not to real audio hardware
+  /// output, so a large enough one-time cold-start latency before the
+  /// platform actually produces sound could silently swallow the
+  /// leading portion of that first buffer (here, the Morse tone) while
+  /// the internal timers fire on schedule regardless. That was the
+  /// working theory -- but this primer, tested on-device, did NOT fix
+  /// the reported symptom (still reproduced immediately after adding
+  /// it), so either the mechanism above is wrong or incomplete, or
+  /// whatever's actually cold here isn't shared with this primer's own
+  /// setAudioSource()+play() sequence. Bluetooth headphones were
+  /// connected in every reproduction so far (this device's connected
+  /// accessory during all testing) -- worth checking whether this
+  /// reproduces at all without Bluetooth before investigating further;
+  /// if it's Bluetooth link wake-up latency specifically rather than
+  /// the local Android audio pipeline, a local silent primer like this
+  /// one wouldn't be expected to help. Left in place since it's cheap
+  /// and harmless even though it didn't resolve this report.
+  Future<void> warmUp() {
+    return _enqueue(_warmUp).catchError((Object e) {
+      logDebug('warmUp: failed: $e');
+    });
+  }
+
+  Future<void> _warmUp() async {
+    if (_warmedUp) return;
+    logDebug('warmUp: play()');
+    await _player.pause();
+    await _player.setAudioSource(
+      InMemoryAudioSource(
+        pcm16WavBytes(
+          Int16List(_sampleRate ~/ 10), // 100ms of silence
+          sampleRate: _sampleRate,
+        ),
+      ),
+    );
+    await _player.play();
+    _warmedUp = true;
+    logDebug('warmUp: done');
   }
 
   Future<void> dispose() => _player.dispose();

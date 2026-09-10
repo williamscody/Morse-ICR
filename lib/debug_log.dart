@@ -20,6 +20,24 @@ final ValueNotifier<List<String>> debugLogEntries = ValueNotifier([]);
 // per-app mediaremoted registration, cleared by rebooting the device;
 // not a code bug at all). Flip back on for the next hard-to-diagnose
 // on-device bug.
+//
+// 2026-09-08: turned back on, then off again the same day -- first real
+// Android device session (Moto G Play 2024) start to finish. Surfaced
+// and fixed several real bugs this uncovered: the missing INTERNET
+// permission (just_audio's local loopback proxy couldn't open a socket
+// at all, so no audio ever played); TtsAnswerSpeaker's per-character
+// cache file name using Object.hash/String.hashCode, which Dart
+// randomizes per isolate, so every launch silently missed its own
+// previous cache and re-synthesized all ~40 answer characters from
+// scratch (~10s of no spoken answers or working Stop button); the
+// missing BLUETOOTH_CONNECT permission speech_to_text's own native
+// Bluetooth SCO handling needs (see AndroidManifest.xml); and a
+// recognition restart-storm (error_client on every attempt, no cooldown
+// between retries) now throttled in speech_to_text_response_listener.dart.
+// See [[project_android_real_device_audio_bugs]] and
+// [[project_android_bluetooth_recognition]] for the full writeup,
+// including what's still open (onset-detection calibration for this
+// specific Bluetooth-headset+phone-mic combo).
 const bool _loggingEnabled = false;
 
 void logDebug(String message) {

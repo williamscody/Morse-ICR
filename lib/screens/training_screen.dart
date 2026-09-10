@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../audio/audio_session_setup.dart';
 import '../audio/keep_alive_audio_loop.dart';
+import '../audio/bluetooth_permission.dart';
 import '../audio/notification_permission.dart';
 import '../audio/training_audio_handler.dart';
 import '../audio/turn_audio_engine.dart';
@@ -695,12 +696,28 @@ class _TrainingScreenState extends State<TrainingScreen>
     } catch (e) {
       logDebug('start: reconfigure/activate failed: $e');
     }
+    // See TurnAudioEngine.warmUp's own doc comment -- absorbs a cold
+    // player's one-time platform audio warm-up latency on a throwaway
+    // buffer, a no-op after the first call against an already-warm
+    // player, so this is safe to await on every Start.
+    try {
+      await _turnAudioEngine?.warmUp().timeout(externalCallTimeout);
+    } catch (e) {
+      logDebug('start: audio warm-up failed: $e');
+    }
     trainingAudioHandler?.reportTraining();
     // Fire-and-forget -- a denial doesn't block training, it just means
     // Android's foreground-service notification (and lock-screen card)
     // won't be visible (section 42, Android background audio). A no-op
     // on iOS and pre-13 Android.
     unawaited(requestNotificationPermissionIfNeeded());
+    // Fire-and-forget, same reasoning -- see
+    // requestBluetoothPermissionIfNeeded's own doc comment for why this
+    // needs to be requested explicitly rather than relying on
+    // speech_to_text's own (narrower) internal request.
+    if (_recognitionEnabled) {
+      unawaited(requestBluetoothPermissionIfNeeded());
+    }
     // Fire-and-forget, not awaited: on-device measurement found this
     // call alone can take ~10s to resolve (vs. ~100-300ms for the
     // Morse player's own play() calls) -- likely LoopMode interacting
