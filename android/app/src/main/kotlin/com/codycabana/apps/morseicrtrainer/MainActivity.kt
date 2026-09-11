@@ -1,4 +1,4 @@
-package com.example.morse_icr
+package com.codycabana.apps.morseicrtrainer
 
 import android.Manifest
 import android.content.pm.PackageManager
