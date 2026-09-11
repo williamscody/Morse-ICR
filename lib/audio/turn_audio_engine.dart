@@ -7,7 +7,6 @@ import '../debug_log.dart';
 import '../morse/morse_event.dart';
 import '../speech/answer_speaker.dart';
 import 'in_memory_audio_source.dart';
-import 'pcm16_wav.dart';
 import 'tone_synthesizer.dart';
 import 'turn_player.dart';
 import 'turn_renderer.dart';
@@ -34,15 +33,36 @@ class TurnAudioEngine implements TurnPlayer {
     this.synthesizer = const ToneSynthesizer(),
     AudioPlayer? player,
   }) : _answerSpeaker = answerSpeaker,
-       _player = player ?? AudioPlayer(handleAudioSessionActivation: false);
+       _player =
+           player ??
+           AudioPlayer(
+             handleAudioSessionActivation: false,
+             handleInterruptions: false,
+           ) {
+    _watchProcessingState(_player);
+  }
   // handleAudioSessionActivation: false -- by default, just_audio calls
   // AudioSession.instance.setActive(true) on the shared AVAudioSession
   // on *every* play() call. This app already owns that lifecycle
   // explicitly (see audio_session_setup.dart, called from
   // TrainingScreen's Start/resume handlers), and on-device measurement
   // found the redundant per-player reactivation was real, measurable
-  // contention (morse_icr project memory). Every AudioPlayer this app
-  // constructs sets this the same way, for the same reason.
+  // contention (morse_icr project memory).
+  //
+  // handleInterruptions: false -- by default, just_audio auto-pauses
+  // itself in response to AudioSession interruption events (see its own
+  // doc comment on the constructor parameter). Confirmed on-device
+  // (Moto G Play 2024, 2026-09-10, network-mode speech recognition):
+  // starting a recognition session triggers exactly this kind of
+  // interruption, and with the default `true`, just_audio silently
+  // paused a turn's own Morse/TTS playback mid-tone the moment
+  // recognition grabbed the audio focus -- audible as tones cut off
+  // partway through. This app already manages its own playback
+  // lifecycle deliberately (Start/Stop, resetPlayer); it doesn't want a
+  // *different* subsystem's own focus request silently pausing it.
+  //
+  // Every AudioPlayer this app constructs sets both the same way, for
+  // the same reasons.
 
   static const _sampleRate = 44100;
 
@@ -54,6 +74,23 @@ class TurnAudioEngine implements TurnPlayer {
   ToneSynthesizer synthesizer;
   final AnswerSpeaker _answerSpeaker;
   AudioPlayer _player;
+
+  // TEMP diagnostic (2026-09-10): logs every processingState transition
+  // with a timestamp, to check whether a reported per-character
+  // "stepped, 50% then 100% ~50ms later" volume fade correlates with a
+  // real buffering/loading window in just_audio's own state machine
+  // (this app's InMemoryAudioSource is served through just_audio's
+  // local HTTP loopback proxy, which has genuine per-call latency) --
+  // as opposed to a platform/HAL volume ramp, which wouldn't show up
+  // here at all. Remove once this investigation concludes either way.
+  StreamSubscription<ProcessingState>? _processingStateSub;
+
+  void _watchProcessingState(AudioPlayer player) {
+    _processingStateSub?.cancel();
+    _processingStateSub = player.processingStateStream.listen((state) {
+      logDebug('processingState: $state');
+    });
+  }
 
   // Every operation below runs through this queue, so a resetPlayer()
   // triggered by TrainingScreen's app-resume handler can never dispose
@@ -132,13 +169,22 @@ class TurnAudioEngine implements TurnPlayer {
     Duration extraGap,
     Completer<TurnTiming> issued,
   ) async {
+    // Only the very first _playTurn() of a session (or after
+    // resetPlayer()) gets a primer -- see [_primerSamples]'s own doc
+    // comment for why, and [_warmedUp]'s for why the cold path
+    // ([_playTurn], not [_prepareTurn]/[_playPrepared]) is exactly where
+    // this belongs: it's what a session's first turn always goes
+    // through.
+    final primer = _warmedUp ? null : _primerSamples();
     final rendered = _renderTurn(
       character,
       wpm,
       recognitionTime,
       includeAnswer,
       extraGap,
+      leadingPrimerSamples: primer,
     );
+    _warmedUp = true;
     // just_audio's native iOS setAudioSource() (AudioPlayer.m's load:)
     // auto-starts the newly loaded source immediately if its own
     // `playing` flag is still true from before -- pausing first (a
@@ -146,9 +192,30 @@ class TurnAudioEngine implements TurnPlayer {
     // what actually starts this turn, never a stale-state side effect of
     // setAudioSource() itself (morse_icr project memory: this was the
     // root cause of the "two morse characters, then voice" bug).
+    // Tried skipping this on Android (2026-09-10), theorizing it was an
+    // iOS-only guard, against a reported per-character stepped
+    // volume-fade -- made things measurably worse (TTS sometimes not
+    // sounding at all, badly broken timing), so this pause() is
+    // required on Android too, not just iOS. Reverted; see
+    // [[project_android_bluetooth_recognition]] project memory. The
+    // per-character version of that fade was fixed instead by enabling
+    // [TrainingScreen]'s KeepAliveAudioLoop on Android too (previously
+    // iOS-only) -- see that call site's own comment. A first-turn-only
+    // version of the fade is still open.
     await _player.pause();
     logDebug('playTurn($character): setAudioSource');
-    await _player.setAudioSource(InMemoryAudioSource(rendered.wavBytes));
+    // initialPosition explicit, not relying on setAudioSource's own
+    // documented zero default -- investigating a reported first-turn
+    // audio-loss/fade pattern ("as if the audio stream is starting
+    // somewhere along its path, depending on where it previously
+    // stopped" -- Bill, 2026-09-10) that would exactly match a stale
+    // seek position carrying over from whatever this player last
+    // played, if the native side doesn't reliably honor that default
+    // itself.
+    await _player.setAudioSource(
+      InMemoryAudioSource(rendered.wavBytes),
+      initialPosition: Duration.zero,
+    );
     _preparedPlayer = null;
     _preparedTiming = null;
     // answerStart/totalDuration/hasAnswer logged here (not just at the
@@ -220,10 +287,16 @@ class TurnAudioEngine implements TurnPlayer {
     // See _playTurn's matching comment -- without pausing first,
     // setAudioSource() below could auto-play this turn immediately as a
     // side effect, silently starting it before playPrepared is ever
-    // called.
+    // called. (Tried Android-conditional, see _playTurn's own comment on
+    // why that was reverted -- required on Android too.)
     await player.pause();
     logDebug('prepareTurn($character): setAudioSource');
-    await player.setAudioSource(InMemoryAudioSource(rendered.wavBytes));
+    // See _playTurn's matching comment on why initialPosition is
+    // explicit here.
+    await player.setAudioSource(
+      InMemoryAudioSource(rendered.wavBytes),
+      initialPosition: Duration.zero,
+    );
     if (identical(player, _player)) {
       _preparedPlayer = player;
       _preparedTiming = rendered.timing;
@@ -328,8 +401,9 @@ class TurnAudioEngine implements TurnPlayer {
     double wpm,
     Duration recognitionTime,
     bool includeAnswer,
-    Duration extraGap,
-  ) {
+    Duration extraGap, {
+    Int16List? leadingPrimerSamples,
+  }) {
     final morseSamples = synthesizer.renderSamples(
       morseElementsForCharacter(character, wpm),
     );
@@ -341,8 +415,52 @@ class TurnAudioEngine implements TurnPlayer {
       recognitionTime: recognitionTime,
       answerSamples: answerSamples,
       extraGap: extraGap,
+      leadingPrimerSamples: leadingPrimerSamples,
       sampleRate: _sampleRate,
     );
+  }
+
+  // See [_playTurn]'s own use of this -- a low-amplitude tone spliced
+  // directly onto the front of a session's first turn, in the same
+  // buffer as the real content, so a Bluetooth link that needs to wake
+  // up pays that cost against this primer instead of the learner's
+  // actual first character. Not pure silence: some audio pipelines
+  // special-case all-zero PCM (e.g. skipping a full Bluetooth wake since
+  // silence doesn't need to actually reach the far end), so a genuinely
+  // silent primer may never exercise the same wake-up path real audio
+  // content does -- confirmed on-device (Moto G Play 2024, 2026-09-08):
+  // a silent version of this same idea, played as a separate play()
+  // call before the first turn rather than spliced into it, did not fix
+  // the reported symptom.
+  //
+  // 2026-09-11: switched from a 300ms tone at the Morse tone's own pitch
+  // to a sub-bass (20Hz) tone, matching [KeepAliveAudioLoop]'s own
+  // frequency choice -- that tone is confirmed (on-device) to satisfy
+  // whatever Android's audio pipeline needs to consider a stream
+  // "really" playing, whereas this primer's original full-pitch version
+  // did not resolve a persistent, first-turn-only truncated-Morse/
+  // TTS-first symptom even combined with `initialPosition: Duration.zero`
+  // and the unconditional KeepAliveAudioLoop fix (see
+  // [[project_android_bluetooth_recognition]]). Working theory motivating
+  // the longer duration: Bill directly observed Android's Stop button
+  // audibly fading out currently-playing audio (unlike iOS, which cuts
+  // immediately) -- consistent with Android's own
+  // AudioService.FadeOutManager applying a gain ramp
+  // (fadeOutUid/unfadeOutUid) tied to audio focus loss/gain, which
+  // requestAudioFocus() at Start would trigger a matching ramp-*up* for,
+  // below the app/just_audio layer entirely. 300ms was confirmed too
+  // short to outlast that ramp; 500ms measurably improved things
+  // on-device (TTS-first symptom gone), bumped to 750ms next to fully
+  // confirm the truncated-Morse remainder is gone too.
+  Int16List _primerSamples() {
+    final primerSynthesizer = ToneSynthesizer(
+      sampleRate: _sampleRate,
+      frequencyHz: 20,
+      amplitude: 0.05,
+    );
+    return primerSynthesizer.renderSamples(const [
+      MorseElement(toneOn: true, durationSeconds: 0.75),
+    ]);
   }
 
   /// Recreates the underlying [AudioPlayer], discarding the old one.
@@ -363,71 +481,54 @@ class TurnAudioEngine implements TurnPlayer {
 
   Future<void> _resetPlayer() async {
     final old = _player;
-    _player = AudioPlayer(handleAudioSessionActivation: false);
+    // See constructor's own doc comment for handleAudioSessionActivation
+    // and handleInterruptions.
+    _player = AudioPlayer(
+      handleAudioSessionActivation: false,
+      handleInterruptions: false,
+    );
+    _watchProcessingState(_player);
     _preparedPlayer = null;
     _preparedTiming = null;
     _warmedUp = false;
     await old.dispose();
   }
 
-  // Guards [warmUp] to only actually run once per [_player] instance --
-  // it's specifically that instance's cold-start latency being worked
-  // around (see [warmUp]'s own doc comment), so a second Start against
-  // an already-warm player would just be 100ms of pointless silence.
-  // Reset alongside [_player] itself in [_resetPlayer], since a freshly
-  // (re)created player is cold again.
+  // Guards the primer [_playTurn] splices onto a session's first turn
+  // (see [_primerSamples]'s own doc comment). Originally assumed this
+  // only needed to happen once per [_player] instance ("a second Start
+  // against an already-warm player doesn't need it again") -- confirmed
+  // wrong on-device (2026-09-11, Moto G Play 2024): a *fresh app launch*
+  // Start got a perfect first Morse tone (primer audibly played), but a
+  // Stop then Start right after, same player instance, played no primer
+  // at all and the clipping came right back. The primer isn't actually
+  // warming up the player/buffer pipeline itself -- it's very likely
+  // absorbing an Android audio-focus gain ramp (see
+  // [[project_android_bluetooth_recognition]]'s FadeOutManager theory),
+  // which this app's own Stop/Start handlers re-trigger on *every* cycle
+  // (`deactivateAudioSession()`/`activateAudioSession()`), not just once
+  // per player instance. [markSessionStart] now resets this on every
+  // Start/Resume, not just [_resetPlayer]'s app-background-recovery
+  // path.
+  //
+  // Previously a separate play() call issued before the first real
+  // [playTurn] (2026-09-08 "TTS plays before Morse" investigation) --
+  // confirmed on-device (2026-09-10) that a separate call didn't help:
+  // the very next play() call (the real turn) could still pay its own
+  // Bluetooth-link-wake cost, since it's a distinct play() from the
+  // primer's. Moved to splicing the primer directly onto the front of
+  // the first turn's own buffer instead -- one continuous play() call,
+  // no gap for the link to go idle in between. See
+  // [[project_android_bluetooth_recognition]] project memory.
   bool _warmedUp = false;
 
-  /// Plays a brief, silent buffer through [_player] and waits for it to
-  /// actually finish -- call this once, right after the audio session is
-  /// activated and before the very first real [playTurn], as an attempt
-  /// to absorb any cold-start latency the platform audio pipeline has.
-  ///
-  /// Investigated on-device (Moto G Play 2024, 2026-09-08) after the
-  /// very first character played after a fresh app launch was reported
-  /// as "TTS plays before Morse" -- every turn is one single pre-mixed
-  /// buffer (Morse tone, then silence, then the spliced-in spoken
-  /// answer -- see this class's own doc comment), played with one
-  /// play() call, so there's no code path that could actually reorder
-  /// them, and this app's own turn-to-turn timers are all scheduled
-  /// relative to when play() was *issued*, not to real audio hardware
-  /// output, so a large enough one-time cold-start latency before the
-  /// platform actually produces sound could silently swallow the
-  /// leading portion of that first buffer (here, the Morse tone) while
-  /// the internal timers fire on schedule regardless. That was the
-  /// working theory -- but this primer, tested on-device, did NOT fix
-  /// the reported symptom (still reproduced immediately after adding
-  /// it), so either the mechanism above is wrong or incomplete, or
-  /// whatever's actually cold here isn't shared with this primer's own
-  /// setAudioSource()+play() sequence. Bluetooth headphones were
-  /// connected in every reproduction so far (this device's connected
-  /// accessory during all testing) -- worth checking whether this
-  /// reproduces at all without Bluetooth before investigating further;
-  /// if it's Bluetooth link wake-up latency specifically rather than
-  /// the local Android audio pipeline, a local silent primer like this
-  /// one wouldn't be expected to help. Left in place since it's cheap
-  /// and harmless even though it didn't resolve this report.
-  Future<void> warmUp() {
-    return _enqueue(_warmUp).catchError((Object e) {
-      logDebug('warmUp: failed: $e');
-    });
-  }
-
-  Future<void> _warmUp() async {
-    if (_warmedUp) return;
-    logDebug('warmUp: play()');
-    await _player.pause();
-    await _player.setAudioSource(
-      InMemoryAudioSource(
-        pcm16WavBytes(
-          Int16List(_sampleRate ~/ 10), // 100ms of silence
-          sampleRate: _sampleRate,
-        ),
-      ),
-    );
-    await _player.play();
-    _warmedUp = true;
-    logDebug('warmUp: done');
+  /// Call at the start of every training session (Start and Resume
+  /// alike, see `TrainingScreen`) -- see [_warmedUp]'s own doc comment
+  /// for why a session's first turn needs its primer every time audio
+  /// focus is freshly (re)acquired, not just once per [_player]
+  /// instance/app launch.
+  void markSessionStart() {
+    _warmedUp = false;
   }
 
   Future<void> dispose() => _player.dispose();

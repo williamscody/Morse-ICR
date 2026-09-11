@@ -46,3 +46,11 @@ app.*.map.json
 
 # Xcode-generated SwiftPM workspace state
 **/xcshareddata/swiftpm/
+
+# third_party/speech_to_text is a local fork (see MORSE_ICR_FORK.md) of
+# just the plugin itself -- its own example app and local.properties
+# (machine-specific SDK paths, one leaked from the original upstream
+# maintainer's machine) aren't needed for the dependency_overrides path
+# reference in pubspec.yaml to work, and don't belong in this repo.
+third_party/speech_to_text/example/
+third_party/speech_to_text/**/local.properties

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -26,6 +27,28 @@ class SpeechToTextResponseListener
   final SpeechToText _speechToText;
   ResponseCallback? _onRecognized;
   bool _shouldBeListening = false;
+
+  // Android forces network-based recognition (onDevice: false) instead
+  // of the on-device recognizer this class otherwise prefers (see
+  // [_listen]'s own comment on why on-device is the default, and this
+  // field's exception to it). Confirmed on-device (Moto G Play 2024,
+  // 2026-09-10): Android's on-device recognizer reports sound-level
+  // readings (the amplitude stream [_onSoundLevel]'s onset detection
+  // depends on entirely) roughly once every ~640ms -- a raw platform
+  // `RecognitionListener.onRmsChanged` characteristic with no
+  // documented way to configure it, confirmed unthrottled by
+  // package:speech_to_text's own native code (this app's local fork,
+  // third_party/speech_to_text, only patches an unrelated recognizer-
+  // reuse bug -- see that fork's own MORSE_ICR_FORK.md). A single
+  // spoken character typically lasts 200-400ms, so a ~640ms sampling
+  // gap routinely misses it catching *any* reading during the actual
+  // response, not just a late one -- independent of amplitude threshold
+  // tuning. Network mode reported roughly every ~20ms in the same test
+  // and produced this investigation's only genuine in-window onset.
+  // Requires connectivity -- speech recognition specifically won't work
+  // offline on Android as a result; Morse playback itself is unaffected
+  // (see [[project_android_bluetooth_recognition]] project memory).
+  static bool get _onDevice => !Platform.isAndroid;
 
   // Throttles [_onStatus]'s auto-restart -- confirmed on-device (Moto G
   // Play 2024, Bluetooth headset connected, 2026-09-08): the native
@@ -281,6 +304,28 @@ class SpeechToTextResponseListener
           'listening');
       return;
     }
+    // Unconditional, not just when [isListening] reads stale-true (that
+    // guard's own history is kept below) -- confirmed on-device (Moto G
+    // Play 2024, 2026-09-10): package:speech_to_text's native Android
+    // side reuses the *same* SpeechRecognizer instance across restarts
+    // rather than creating a fresh one (SpeechToTextPlugin.kt's
+    // createRecognizer early-returns whenever one already exists), and
+    // Android's SpeechRecognizer throws ERROR_CLIENT when
+    // startListening() is called again on an instance that hasn't been
+    // explicitly reset since its last session ended. On-device data: a
+    // session's very *first* listen() (a freshly created recognizer)
+    // ran cleanly for 5+ seconds and captured genuine speech; every
+    // restart after that -- calling listen() again on the same
+    // instance with no cancel() in between -- failed instantly with
+    // error_client, 100% of the time, for the rest of the session.
+    // cancel() on an instance that isn't currently listening is a
+    // documented no-op on the native side, so this is safe even on the
+    // very first call where there's nothing to actually cancel.
+    try {
+      await _speechToText.cancel();
+    } catch (e) {
+      logDebug('speech_to_text: cancel() before listen threw $e');
+    }
     if (_speechToText.isListening) {
       // A session that produced *zero* `heard`/onset/release log lines
       // for its entire duration (2026-08-28, likely following an
@@ -296,7 +341,9 @@ class SpeechToTextResponseListener
       // started. The only plausible way to reach `isListening: true`
       // here is a stale native session that never got the memo it ended
       // (e.g. surviving an odd lifecycle transition) -- so force it
-      // stopped and start fresh instead of deferring to it.
+      // stopped and start fresh instead of deferring to it. Kept
+      // alongside the unconditional cancel() above (belt-and-suspenders
+      // -- cancel() is a request, not a guaranteed-synchronous reset).
       logDebug(
         'speech_to_text: _listen found isListening already true -- '
         'stopping stale session before starting fresh',
@@ -321,13 +368,15 @@ class SpeechToTextResponseListener
     // servers that the (default) hybrid on-device/network mode can
     // take -- measured on-device, results otherwise arrived 700ms-1.5s
     // after the speech that produced them, well past any recognition
-    // window a fast-paced training loop can afford to wait.
+    // window a fast-paced training loop can afford to wait. iOS-only,
+    // as of 2026-09-10 -- see [_onDevice]'s own doc comment for why
+    // Android forces this to false instead.
     _lastListenStartedAt = DateTime.now();
     try {
       await _speechToText.listen(
         onResult: _onResult,
         onSoundLevelChange: _onSoundLevel,
-        listenOptions: SpeechListenOptions(onDevice: true),
+        listenOptions: SpeechListenOptions(onDevice: _onDevice),
       );
       logDebug('speech_to_text: listen() call returned');
     } catch (e) {
@@ -514,6 +563,13 @@ class SpeechToTextResponseListener
   static const int _warmupReadingCount = 5;
 
   void _onSoundLevel(double level) {
+    // Unlike every other logDebug call in this file, this fires on
+    // every single reading, not just onset/release transitions --
+    // deliberately verbose (added 2026-09-10) so a future onset-
+    // detection tuning pass has the full raw trace to work from
+    // instead of just the transitions the threshold logic already
+    // decided on.
+    logDebug('speech_to_text: raw level=$level speaking=$_speaking');
     if (_warmupReadingsRemaining > 0) {
       _warmupReadingsRemaining--;
       _quietBaseline = level;

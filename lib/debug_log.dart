@@ -38,6 +38,62 @@ final ValueNotifier<List<String>> debugLogEntries = ValueNotifier([]);
 // [[project_android_bluetooth_recognition]] for the full writeup,
 // including what's still open (onset-detection calibration for this
 // specific Bluetooth-headset+phone-mic combo).
+//
+// 2026-09-10: turned back on, then off again the same day -- continued
+// the recognition investigation above. Confirmed the error_client
+// restart-storm is specific to on-device recognition (onDevice: true):
+// switching to network mode produced zero error_client and the first
+// genuine in-window onset (windowOpen: true) seen in this whole
+// investigation, but introduced a new regression instead (a turn's
+// play() reporting "completed" ~17ms after being issued instead of its
+// real ~1.5s duration -- audible as chopped-off Morse tones), so
+// reverted back to onDevice: true rather than trade one bug for
+// another. See [[project_android_bluetooth_recognition]]'s update for
+// the full detail. Still open.
+//
+// 2026-09-10 (later the same day): flipped on again, then off again --
+// concluded the investigation above. Forked speech_to_text locally
+// (third_party/speech_to_text) to fix the recognizer-reuse bug behind
+// error_client, then switched Android to network-mode recognition
+// (fixing the chopped-Morse-tone regression along the way -- just_audio
+// was auto-pausing on the recognizer's own audio-focus request; see
+// handleInterruptions: false on every AudioPlayer this app constructs).
+// That got the whole pipeline working cleanly -- onset detection
+// correctly caught in-window responses -- but real transcription
+// accuracy for rapid, isolated single characters stayed too low to be
+// usable, even after also trying more inter-character spacing (Extra
+// Gap). Concluded this is a genuine accuracy ceiling of Android speech
+// recognition for this app's use case, not a fixable bug. Speech
+// Recognition is now disabled outright on Android (see
+// SettingsScreen's Switch and TrainingScreen's _recognitionEnabled) --
+// see [[project_android_bluetooth_recognition]] for the full writeup.
+//
+// 2026-09-10 (still later): flipped on, then off again -- continued
+// investigating a separate, still-unresolved bug (a per-character
+// stepped volume fade-in on Android playback, confirmed on both wired
+// and Bluetooth output). Ruled out audio focus, this app's own
+// setVolume() calls, and just_audio's own processingState/buffering
+// timing (TurnAudioEngine._watchProcessingState, left in place --
+// still an open investigation, not concluded) as the cause. A
+// pause()-skip experiment made things measurably worse and was
+// reverted. Bill is thinking about how to proceed; see
+// [[project_android_bluetooth_recognition]]'s last section.
+//
+// 2026-09-10 (still later): flipped back on -- a sharper symptom report
+// (sequential A-Z mode skipping straight from C to F) traced to a real
+// bug in TrainingEngine._runLoop: a failed prepareTurn() silently
+// abandoned its character instead of retrying it, because
+// CharacterSelector.next() has no way to "give back" a character once
+// drawn. Fixed (see that file's prepareFuture.catchError). That skip
+// turned out to be a red herring anyway (same behavior confirmed on iOS,
+// by design -- see [[project_android_bluetooth_recognition]]), but the
+// fix is real and stays.
+//
+// 2026-09-11: turned off again -- the actual first-turn audio bug this
+// logging was chasing is now confirmed fixed on-device (retuned 20Hz/
+// 750ms primer + TurnAudioEngine.markSessionStart firing it on every
+// Start/Resume, not just app launch). See
+// [[project_android_bluetooth_recognition]] for the full resolution.
 const bool _loggingEnabled = false;
 
 void logDebug(String message) {

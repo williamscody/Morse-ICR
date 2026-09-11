@@ -42,9 +42,17 @@ class KeepAliveAudioLoop {
   // See TurnAudioEngine's matching constructor comment --
   // handleAudioSessionActivation: false avoids this player redundantly
   // reactivating the shared AVAudioSession (which TrainingScreen
-  // already owns explicitly) on every play() call.
+  // already owns explicitly) on every play() call, and
+  // handleInterruptions: false avoids just_audio auto-pausing this
+  // player (its default behavior) whenever some other subsystem (e.g.
+  // speech recognition) requests its own audio focus.
   KeepAliveAudioLoop({AudioPlayer? player})
-    : _player = player ?? AudioPlayer(handleAudioSessionActivation: false);
+    : _player =
+          player ??
+          AudioPlayer(
+            handleAudioSessionActivation: false,
+            handleInterruptions: false,
+          );
 
   AudioPlayer _player;
 
@@ -68,7 +76,10 @@ class KeepAliveAudioLoop {
     // an unlooped source; unconfirmed why, but this ordering matches
     // just_audio's own typical usage pattern.
     logDebug('keepAlive: setAudioSource');
-    await _player.setAudioSource(InMemoryAudioSource(_loopWav));
+    await _player.setAudioSource(
+      InMemoryAudioSource(_loopWav),
+      initialPosition: Duration.zero,
+    );
     logDebug('keepAlive: setLoopMode');
     await _player.setLoopMode(LoopMode.one);
     logDebug('keepAlive: setVolume');
@@ -85,7 +96,10 @@ class KeepAliveAudioLoop {
   /// [start] again afterward if the loop should still be running.
   Future<void> resetPlayer() async {
     final old = _player;
-    _player = AudioPlayer(handleAudioSessionActivation: false);
+    _player = AudioPlayer(
+      handleAudioSessionActivation: false,
+      handleInterruptions: false,
+    );
     await old.dispose();
   }
 

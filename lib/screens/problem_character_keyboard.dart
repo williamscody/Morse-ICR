@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
 import '../training/character_set.dart';
@@ -15,9 +17,11 @@ import '../training/problem_character_store.dart';
 /// Every chip [_scores] has an entry for -- i.e. every character that's
 /// actually been *attempted* in some training session, regardless of
 /// whether it's currently selected here -- is heat-map colored from red
-/// (few correct answers) to green (many), with the count itself printed
-/// below the character (see [_heatMapColor]). A character with no entry
-/// at all (never trained) stays transparent. This coloring is entirely
+/// (few correct answers) to green (many) (see [_heatMapColor]). A
+/// character with no entry at all (never trained) stays transparent.
+/// The underlying tally itself is no longer shown on the chip (removed
+/// 2026-09-10, Bill's request) -- [_scores]/[_attempts] still track it
+/// for the coloring and the Focusizer's own ranking. This coloring is entirely
 /// independent of [_selected] (the border below is what shows that):
 /// training a full character set like A-Z on the main screen, without
 /// ever touching this screen's Focus picker, still colors every one of
@@ -384,66 +388,48 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                             // tally [RichText] below.
                                             softWrap: false,
                                             overflow: TextOverflow.visible,
-                                            style: TextStyle(color: textColor),
-                                          ),
-                                          // RichText, not Text -- a bare Text
-                                          // here would make the score digits
-                                          // ambiguous with the digit *chips*
-                                          // ('0'-'9' are themselves characters
-                                          // in [allCharacters]) for any test or
-                                          // tooling that finds chips by their
-                                          // label text.
-                                          RichText(
-                                            textScaler: MediaQuery.textScalerOf(
-                                              context,
-                                            ),
-                                            // A tally in the high teens/twenties
-                                            // is exactly as wide as the chip's
-                                            // available label width for some
-                                            // digit pairs but not others (font
-                                            // metrics vary per digit) --
-                                            // without these, [RichText]'s
-                                            // default wrapping would break
-                                            // right between the two digits,
-                                            // pushing the second one out past
-                                            // the chip's own rounded bounds
-                                            // instead of keeping the tally on
-                                            // one line.
-                                            softWrap: false,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.visible,
-                                            text: TextSpan(
-                                              text: '$score',
-                                              style: TextStyle(
-                                                color: textColor,
-                                                fontSize: 10,
-                                              ),
+                                            style: TextStyle(
+                                              color: textColor,
+                                              fontSize: 22,
+                                              fontWeight: FontWeight.w600,
                                             ),
                                           ),
                                         ],
                                       ),
                                       showCheckmark: false,
-                                      // Trims the chip's own default vertical
-                                      // padding (7 a side) down to 5.6 a
-                                      // side -- 8 horizontal is the
-                                      // (unchanged) default, kept explicit
-                                      // only because [padding] is one
-                                      // EdgeInsets -- for a precise 10%
-                                      // reduction in overall chip height
-                                      // (48 -> 43.2 logical pixels, measured
-                                      // via [tester.getSize] on an 'A' chip)
-                                      // with the width untouched (Bill,
-                                      // 2026-09-02). [shrinkWrap] is required
+                                      // vertical: 13 makes this chip's own
+                                      // natural (content-driven) height come
+                                      // out to ~58.3 -- matching the grid
+                                      // cell's own [mainAxisExtent] below, so
+                                      // the chip's painted background fills
+                                      // the cell with no visible gap inside
+                                      // the selection ring overlay. Confirmed
+                                      // via a throwaway widget-test probe
+                                      // (fontSize 22 / vertical 13 -> 59.0,
+                                      // clamped to the grid's 58.3). Removing
+                                      // the tally number (2026-09-10) shrank
+                                      // this chip's natural content back down
+                                      // to a single line -- this padding
+                                      // (previously 5.6, tuned for that
+                                      // single-line case pre-tally) restores
+                                      // the fuller, two-line-era chip size
+                                      // Bill wants kept even with the tally
+                                      // gone, now filled by a larger font
+                                      // instead of a second line (Bill,
+                                      // 2026-09-11: "restore the chip size to
+                                      // their prior dimensions, and... now
+                                      // that we have the room, increase the
+                                      // font size"). [shrinkWrap] is required
                                       // alongside it: Material's default tap
                                       // target enforces a 48-tall minimum
                                       // that would otherwise silently
-                                      // re-inflate the chip back to its old
-                                      // height regardless of this padding.
+                                      // re-inflate the chip regardless of
+                                      // this padding.
                                       materialTapTargetSize:
                                           MaterialTapTargetSize.shrinkWrap,
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 8,
-                                        vertical: 5.6,
+                                        vertical: 13,
                                       ),
                                       backgroundColor: color,
                                       selectedColor: color,
@@ -566,91 +552,113 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                     );
                                   },
                                 ),
-                                const SizedBox(height: 24),
-                                Text(
-                                  'Focusizer ${_selected.length}',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    fontStyle: FontStyle.italic,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                // Shrinks the slider's default touch-target
-                                // overlay/thumb, and its own reserved top/bottom
-                                // padding (`padding: EdgeInsets.zero`, matching
-                                // [SteppedIntControl]'s identical slider elsewhere
-                                // in the app), so the visible track sits right
-                                // under the label above instead of leaving a gap
-                                // (Bill, on-device, 2026-09-01/02) -- a stock
-                                // [Slider] reserves extra invisible padding around
-                                // its track for the thumb's tap/ripple area.
-                                SliderTheme(
-                                  data: SliderTheme.of(context).copyWith(
-                                    trackHeight: 3,
-                                    padding: EdgeInsets.zero,
-                                    thumbShape: const RoundSliderThumbShape(
-                                      enabledThumbRadius: 8,
+                                // Focusizer (the auto-build-from-scores
+                                // slider) is hidden on Android -- see
+                                // SettingsScreen's Speech Recognition
+                                // Switch and
+                                // [[project_android_bluetooth_recognition]]
+                                // project memory. [_scores]/[_attempts]
+                                // are only ever populated by a training
+                                // session's own correct/incorrect
+                                // credit, which requires Speech
+                                // Recognition -- disabled outright on
+                                // Android now, so every chip would stay
+                                // permanently untrained/transparent
+                                // there and this slider would have
+                                // nothing to rank (Bill, 2026-09-10:
+                                // "meaningless without speech
+                                // recognition"). The heat-map keyboard
+                                // itself and the character-tap-to-select
+                                // flow above are unaffected -- still a
+                                // perfectly usable plain character
+                                // picker without score data.
+                                if (!Platform.isAndroid) ...[
+                                  const SizedBox(height: 24),
+                                  Text(
+                                    'Focusizer ${_selected.length}',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      fontSize: 12,
                                     ),
-                                    overlayShape:
-                                        SliderComponentShape.noOverlay,
                                   ),
-                                  child: Row(
-                                    children: [
-                                      IconButton(
-                                        visualDensity: const VisualDensity(
-                                          horizontal: -2,
-                                          vertical: -2,
-                                        ),
-                                        iconSize: 26,
-                                        icon: Icon(
-                                          Icons.remove_circle_outline,
-                                          color: _heatMapRedColor,
-                                        ),
-                                        onPressed: _rankedByScore.isEmpty
-                                            ? null
-                                            : () => _stepFocusSlider(-1),
+                                  // Shrinks the slider's default touch-target
+                                  // overlay/thumb, and its own reserved top/bottom
+                                  // padding (`padding: EdgeInsets.zero`, matching
+                                  // [SteppedIntControl]'s identical slider elsewhere
+                                  // in the app), so the visible track sits right
+                                  // under the label above instead of leaving a gap
+                                  // (Bill, on-device, 2026-09-01/02) -- a stock
+                                  // [Slider] reserves extra invisible padding around
+                                  // its track for the thumb's tap/ripple area.
+                                  SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 3,
+                                      padding: EdgeInsets.zero,
+                                      thumbShape: const RoundSliderThumbShape(
+                                        enabledThumbRadius: 8,
                                       ),
-                                      Expanded(
-                                        child: Slider(
-                                          value: _focusSliderValue.clamp(
-                                            0,
-                                            _rankedByScore.length.toDouble(),
+                                      overlayShape:
+                                          SliderComponentShape.noOverlay,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        IconButton(
+                                          visualDensity: const VisualDensity(
+                                            horizontal: -2,
+                                            vertical: -2,
                                           ),
-                                          min: 0,
-                                          // A max/divisions of 0 (nothing trained
-                                          // yet, see [_rankedByScore]) would be a
-                                          // degenerate, unusable [Slider] -- fall
-                                          // back to a disabled 0-to-1 slider
-                                          // rather than dividing by zero.
-                                          max: _rankedByScore.isEmpty
-                                              ? 1
-                                              : _rankedByScore.length
-                                                    .toDouble(),
-                                          divisions: _rankedByScore.isEmpty
+                                          iconSize: 26,
+                                          icon: Icon(
+                                            Icons.remove_circle_outline,
+                                            color: _heatMapRedColor,
+                                          ),
+                                          onPressed: _rankedByScore.isEmpty
                                               ? null
-                                              : _rankedByScore.length,
-                                          onChanged: _rankedByScore.isEmpty
+                                              : () => _stepFocusSlider(-1),
+                                        ),
+                                        Expanded(
+                                          child: Slider(
+                                            value: _focusSliderValue.clamp(
+                                              0,
+                                              _rankedByScore.length.toDouble(),
+                                            ),
+                                            min: 0,
+                                            // A max/divisions of 0 (nothing trained
+                                            // yet, see [_rankedByScore]) would be a
+                                            // degenerate, unusable [Slider] -- fall
+                                            // back to a disabled 0-to-1 slider
+                                            // rather than dividing by zero.
+                                            max: _rankedByScore.isEmpty
+                                                ? 1
+                                                : _rankedByScore.length
+                                                      .toDouble(),
+                                            divisions: _rankedByScore.isEmpty
+                                                ? null
+                                                : _rankedByScore.length,
+                                            onChanged: _rankedByScore.isEmpty
+                                                ? null
+                                                : _onFocusSliderChanged,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          visualDensity: const VisualDensity(
+                                            horizontal: -2,
+                                            vertical: -2,
+                                          ),
+                                          iconSize: 26,
+                                          icon: Icon(
+                                            Icons.add_circle_outline,
+                                            color: _heatMapGreenColor,
+                                          ),
+                                          onPressed: _rankedByScore.isEmpty
                                               ? null
-                                              : _onFocusSliderChanged,
+                                              : () => _stepFocusSlider(1),
                                         ),
-                                      ),
-                                      IconButton(
-                                        visualDensity: const VisualDensity(
-                                          horizontal: -2,
-                                          vertical: -2,
-                                        ),
-                                        iconSize: 26,
-                                        icon: Icon(
-                                          Icons.add_circle_outline,
-                                          color: _heatMapGreenColor,
-                                        ),
-                                        onPressed: _rankedByScore.isEmpty
-                                            ? null
-                                            : () => _stepFocusSlider(1),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
-                                ),
+                                ],
                                 // In-column, directly under the Focusizer, rather
                                 // than detached at the physical bottom of the
                                 // screen (e.g. via `bottomNavigationBar`) -- Bill

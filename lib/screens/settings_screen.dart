@@ -1,6 +1,9 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 
 import '../speech/tts_voice_option.dart';
+import 'help_screen.dart';
 import 'widgets/stepped_int_control.dart';
 
 // The value a "Voice" dropdown item uses to mean "no preference -- pick
@@ -286,7 +289,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       // See the "Voice" row's own [Expanded] comment above.
                       Expanded(
                         child: Text(
-                          'Speech Recognition',
+                          Platform.isAndroid
+                              ? 'Speech Recognition (iOS only)'
+                              : 'Speech Recognition',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -295,15 +300,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: Switch(
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
-                          value: _recognitionEnabled,
-                          onChanged: (value) {
-                            setState(() => _recognitionEnabled = value);
-                            widget.onRecognitionChanged(value);
-                          },
+                          // Forced off and non-interactive on Android --
+                          // see the Help screen's "Voice & Speech
+                          // Recognition" section and
+                          // [[project_android_bluetooth_recognition]]
+                          // project memory for why: Android's speech
+                          // recognizer, on-device or network-based,
+                          // could not be made to reliably transcribe the
+                          // rapid, isolated single-character answers
+                          // this app needs, after an extensive
+                          // investigation (2026-09-08/10) that fixed
+                          // several real infrastructure bugs along the
+                          // way but hit a genuine accuracy ceiling, not
+                          // a bug, at the end of it. iOS's recognizer
+                          // does not share this limitation.
+                          value: Platform.isAndroid
+                              ? false
+                              : _recognitionEnabled,
+                          onChanged: Platform.isAndroid
+                              ? null
+                              : (value) {
+                                  setState(() => _recognitionEnabled = value);
+                                  widget.onRecognitionChanged(value);
+                                },
                         ),
                       ),
                     ],
                   ),
+                  if (Platform.isAndroid) ...[
+                    const SizedBox(height: 4),
+                    InkWell(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const HelpScreen(
+                            initialSectionTitle:
+                                'Voice & Speech Recognition (Experimental)',
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'See in-app Help page ',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          Icon(
+                            Icons.info_outline,
+                            size: 14,
+                            color: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.color,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (_personalizeRecognitionEnabled) ...[
                     const SizedBox(height: 12),
                     // Opens voice enrollment (morse_icr_spec.md section

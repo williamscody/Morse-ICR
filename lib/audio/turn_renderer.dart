@@ -31,25 +31,41 @@ class RenderedTurn {
 /// own start, per [TurnTiming]'s doc comment -- shift out along with it,
 /// keeping the "beat the computer" window aligned with where the Morse
 /// tone actually now sits.
+///
+/// [leadingPrimerSamples], if given, is spliced in before [extraGap]'s
+/// own leading silence rather than instead of it -- an unrelated,
+/// independent use of the same "extra content before the Morse tone,
+/// same buffer, one play() call" mechanism (see
+/// [TurnAudioEngine.warmUp]'s own doc comment for why: a session's
+/// first turn on Bluetooth output can lose its leading audio to the
+/// link's own wake-up cost, and a *separate* play() call primer wasn't
+/// enough to prevent the very next play() call from paying that same
+/// cost again -- splicing the primer into the same continuous buffer as
+/// the real content it's meant to protect closes that gap entirely).
 RenderedTurn renderTurn({
   required Int16List morseSamples,
   required Duration recognitionTime,
   Int16List? answerSamples,
   Duration extraGap = Duration.zero,
+  Int16List? leadingPrimerSamples,
   int sampleRate = 44100,
 }) {
   int sampleCountFor(Duration duration) =>
       (duration.inMicroseconds * sampleRate / Duration.microsecondsPerSecond)
           .round();
 
+  final primerCount = leadingPrimerSamples?.length ?? 0;
   final gapCount = sampleCountFor(extraGap);
   final silenceCount = sampleCountFor(recognitionTime);
-  final morseOffset = gapCount;
+  final morseOffset = primerCount + gapCount;
   final morseEndOffset = morseOffset + morseSamples.length;
   final answerOffset = morseEndOffset + silenceCount;
   final totalLength = answerOffset + (answerSamples?.length ?? 0);
 
   final combined = Int16List(totalLength);
+  if (leadingPrimerSamples != null) {
+    combined.setRange(0, primerCount, leadingPrimerSamples);
+  }
   combined.setRange(morseOffset, morseEndOffset, morseSamples);
   // [answerOffset, totalLength) is either the answer, spliced in below,
   // or -- when there's no cached answer -- left at Int16List's default

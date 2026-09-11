@@ -91,8 +91,10 @@ final List<_HelpSection> _helpSections = [
           'means mostly correct, with everything in between scaled '
           'against your best-performing character. A character with no '
           'color at all has never come up in a session yet.',
-      'Below the character grid, the Focusizer slider builds a practice '
-          'list for you automatically from those same scores. Drag it '
+      'Below the character grid (iOS only -- it needs Speech Recognition '
+          'score data, which Android doesn\'t have), the Focusizer slider '
+          'builds a practice list for you automatically from those same '
+          'scores. Drag it '
           'left to right to select your worst-performing characters '
           'first, adding progressively better-performing ones as you go '
           'further right; drag it all the way to the left to clear the '
@@ -142,18 +144,28 @@ final List<_HelpSection> _helpSections = [
           '(wired or Bluetooth). If Speech Recognition is on and no '
           'headphones are connected, the app will ask you to connect '
           'them or turn the toggle off.',
-      'Speech Recognition is an experimental feature. It relies on your '
-          'device\'s on-board speech recognizer and voice-activity '
-          'detection, both of which are inherently imperfect -- expect '
-          'occasional false credit for an answer you didn\'t actually say '
-          'in time, occasional missed credit for one you did, and letters '
-          'that sound alike (B/P, M/N, and similar pairs) being confused '
-          'for each other. Background noise, microphone placement, and '
-          'accent all affect accuracy, and behavior can vary between '
-          'iOS and Android and between individual devices. See "Getting '
-          'the Best Recognition Accuracy" below for ways to reduce these '
-          'errors, but some baseline error rate is inherent to the '
-          'technology and not fully eliminable through settings.',
+      'Speech Recognition is an experimental feature, and iPhone-only. '
+          'It relies on your device\'s on-board speech recognizer and '
+          'voice-activity detection, both of which are inherently '
+          'imperfect -- expect occasional false credit for an answer you '
+          'didn\'t actually say in time, occasional missed credit for '
+          'one you did, and letters that sound alike (B/P, M/N, and '
+          'similar pairs) being confused for each other. Background '
+          'noise, microphone placement, and accent all affect accuracy, '
+          'and behavior can vary between individual iPhones. See '
+          '"Getting the Best Recognition Accuracy" below for ways to '
+          'reduce these errors, but some baseline error rate is '
+          'inherent to the technology and not fully eliminable through '
+          'settings.',
+      'Android: Speech Recognition is unavailable, not just untested. '
+          'After an extensive investigation, Android\'s speech '
+          'recognizer -- both its on-device and network-based modes -- '
+          'could not be made to reliably transcribe the kind of rapid, '
+          'isolated single-character answers this app needs, even after '
+          'fixing several real underlying bugs along the way. That '
+          'turned out to be an accuracy ceiling, not a bug, so the '
+          'Speech Recognition toggle is disabled on Android rather than '
+          'left on to silently under-credit real answers.',
     ],
   ),
   _HelpSection(
@@ -198,7 +210,7 @@ final List<_HelpSection> _helpSections = [
     ],
   ),
   _HelpSection(
-    title: 'Getting the Best Recognition Accuracy',
+    title: 'Getting the Best Recognition Accuracy (iOS)',
     icon: Icons.tips_and_updates,
     color: Colors.amber,
     paragraphs: [
@@ -278,7 +290,16 @@ final List<_HelpSection> _helpSections = [
 /// 2026-08-30). Reached from the main screen's "circled i" icon, just
 /// left of Settings.
 class HelpScreen extends StatefulWidget {
-  const HelpScreen({super.key});
+  const HelpScreen({super.key, this.initialSectionTitle});
+
+  /// Scrolls straight to the section whose [_HelpSection.title] matches
+  /// this exactly, once the screen opens -- used by external callers
+  /// (e.g. SettingsScreen's Speech Recognition info icon) that want to
+  /// open Help already pointed at one specific topic rather than
+  /// leaving the learner to find it via the Contents list themselves.
+  /// Null (the default, matching every other caller -- the main Help
+  /// button) just opens at the top as before.
+  final String? initialSectionTitle;
 
   @override
   State<HelpScreen> createState() => _HelpScreenState();
@@ -288,6 +309,22 @@ class _HelpScreenState extends State<HelpScreen> {
   final List<GlobalKey> _sectionKeys = [
     for (final _ in _helpSections) GlobalKey(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    final title = widget.initialSectionTitle;
+    if (title == null) return;
+    final index = _helpSections.indexWhere((s) => s.title == title);
+    if (index == -1) return;
+    // Sections are always mounted (see the Column/SingleChildScrollView
+    // comment below), but not yet laid out during initState -- a
+    // post-frame callback is the earliest point [_jumpTo]'s
+    // Scrollable.ensureVisible has real geometry to work with.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _jumpTo(index);
+    });
+  }
 
   void _jumpTo(int index) {
     final sectionContext = _sectionKeys[index].currentContext;

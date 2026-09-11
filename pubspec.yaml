@@ -54,6 +54,14 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+# Local patched fork of speech_to_text 7.4.0 -- see
+# third_party/speech_to_text/MORSE_ICR_FORK.md for what's patched and
+# why (an on-device Android recognizer-reuse bug causing ERROR_CLIENT
+# on every recognition restart after a session's first listen() call).
+dependency_overrides:
+  speech_to_text:
+    path: third_party/speech_to_text
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 

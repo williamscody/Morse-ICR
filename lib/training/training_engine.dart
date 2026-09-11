@@ -28,9 +28,11 @@ class TrainingEngine {
     required TurnPlayer turnPlayer,
     CharacterSelector? selector,
     Duration pendingResponseTimeout = const Duration(seconds: 2),
+    Duration responseWindowLatencyCompensation = Duration.zero,
   }) : _turnPlayer = turnPlayer,
        _selector = selector ?? CharacterSelector(),
-       _pendingResponseTimeout = pendingResponseTimeout;
+       _pendingResponseTimeout = pendingResponseTimeout,
+       _responseWindowLatencyCompensation = responseWindowLatencyCompensation;
 
   final TurnPlayer _turnPlayer;
   final CharacterSelector _selector;
@@ -40,6 +42,14 @@ class TrainingEngine {
   // so the timeout itself is directly testable without a real multi-
   // second wait; production code relies on the default.
   final Duration _pendingResponseTimeout;
+  // Shifts when [_windowOpenTimer]/[_windowCloseTimer] fire, later by
+  // this much, relative to [TurnPlayer]'s own reported morseEnd/
+  // answerStart offsets -- see those fields' own doc comment for why
+  // this exists. Zero (no shift) unless the caller has measured a real
+  // platform output-pipeline latency worth compensating for; see
+  // [[project_android_bluetooth_recognition]] project memory for the
+  // on-device data (Moto G Play 2024, 2026-09-10) that motivated this.
+  final Duration _responseWindowLatencyCompensation;
 
   bool _running = false;
   Future<void>? _loopFuture;
@@ -541,23 +551,29 @@ class TrainingEngine {
       // timestamps, directly comparable against VoiceResponseListener's
       // "utterance detected"/"match took" log lines, rather than having
       // to estimate the window's position from a turn's total duration.
-      _windowOpenTimer = Timer(resolvedTiming.morseEnd, () {
-        _responseWindowOpen = true;
-        logDebug('windowOpen($character): opened');
-        onResponseWindowOpened?.call(character);
-      });
+      _windowOpenTimer = Timer(
+        resolvedTiming.morseEnd + _responseWindowLatencyCompensation,
+        () {
+          _responseWindowOpen = true;
+          logDebug('windowOpen($character): opened');
+          onResponseWindowOpened?.call(character);
+        },
+      );
       final closingTurn = _currentTurn!;
-      _windowCloseTimer = Timer(resolvedTiming.answerStart, () {
-        _responseWindowOpen = false;
-        logDebug('windowOpen($character): closed');
-        if (closingTurn.credited)
-          return; // already credited -- nothing to track
-        closingTurn.finalizeTimer = Timer(
-          _pendingResponseTimeout,
-          () => _finalizeMissed(closingTurn),
-        );
-        _pendingTurns.add(closingTurn);
-      });
+      _windowCloseTimer = Timer(
+        resolvedTiming.answerStart + _responseWindowLatencyCompensation,
+        () {
+          _responseWindowOpen = false;
+          logDebug('windowOpen($character): closed');
+          if (closingTurn.credited)
+            return; // already credited -- nothing to track
+          closingTurn.finalizeTimer = Timer(
+            _pendingResponseTimeout,
+            () => _finalizeMissed(closingTurn),
+          );
+          _pendingTurns.add(closingTurn);
+        },
+      );
 
       // Pre-fetch the *next* turn now, overlapping its render+
       // setAudioSource() cost with this turn's own playback instead of
@@ -592,6 +608,24 @@ class TrainingEngine {
           })
           .catchError((Object e) {
             logDebug('prepareTurn($upcoming) failed: $e');
+            // Still hand [upcoming] to the next iteration as though it
+            // *had* been prepared, just with nothing actually loaded --
+            // [CharacterSelector.next] has no way to "give back" a
+            // character once returned, so leaving preparedCharacter null
+            // here would make the next iteration's own `else` branch draw
+            // a brand-new character via a fresh next() call instead,
+            // silently abandoning [upcoming] with no audible turn and no
+            // visible error (confirmed on-device 2026-09-10, sequential
+            // A-Z mode: stopping on C and expecting D next instead played
+            // F, i.e. both D and E silently dropped this way). The next
+            // iteration's own playPrepared()->null->cold playTurn()
+            // fallback already handles an unset _preparedTiming correctly
+            // by retrying this exact character, once this is set.
+            preparedCharacter = upcoming;
+            preparedWpm = upcomingWpm;
+            preparedRecognitionTime = upcomingRecognitionTime;
+            preparedIncludeAnswer = upcomingIncludeAnswer;
+            preparedExtraGap = upcomingExtraGap;
           });
 
       await _wait(resolvedTiming.totalDuration);

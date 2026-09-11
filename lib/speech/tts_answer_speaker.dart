@@ -63,8 +63,17 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
        // See TurnAudioEngine's matching constructor comment --
        // handleAudioSessionActivation: false avoids this player
        // redundantly reactivating the shared AVAudioSession (which
-       // TrainingScreen already owns explicitly) on every play() call.
-       _player = player ?? AudioPlayer(handleAudioSessionActivation: false) {
+       // TrainingScreen already owns explicitly) on every play() call,
+       // and handleInterruptions: false avoids just_audio auto-pausing
+       // this player (its default behavior) whenever some other
+       // subsystem (e.g. speech recognition) requests its own audio
+       // focus.
+       _player =
+           player ??
+           AudioPlayer(
+             handleAudioSessionActivation: false,
+             handleInterruptions: false,
+           ) {
     // [speak] awaits this before playing or falling back to live
     // speech, so an early announcement can never race a still-in-flight
     // setup/pre-render call below.
@@ -559,6 +568,8 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     // stuck true. Pausing first (a no-op if already paused) guarantees
     // our own play() call is what actually starts playback.
     await _player.pause();
+    // initialPosition explicit -- see TurnAudioEngine._playTurn's
+    // matching comment on why.
     await _player.setAudioSource(
       InMemoryAudioSource(
         pcm16WavBytes(
@@ -566,6 +577,7 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
           sampleRate: _sampleRate,
         ),
       ),
+      initialPosition: Duration.zero,
     );
 
     final completer = Completer<void>();
@@ -610,7 +622,10 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
 
   Future<void> _resetPlayer() async {
     final old = _player;
-    _player = AudioPlayer(handleAudioSessionActivation: false);
+    _player = AudioPlayer(
+      handleAudioSessionActivation: false,
+      handleInterruptions: false,
+    );
     await old.dispose();
   }
 }

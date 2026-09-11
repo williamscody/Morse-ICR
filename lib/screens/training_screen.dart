@@ -222,7 +222,10 @@ class _TrainingScreenState extends State<TrainingScreen>
   // "momentarily-stale" pattern as everything else seeded from
   // [_appSettingsStore]'s async load.
   List<TtsVoiceOption> _availableVoices = [];
-  bool _recognitionEnabled = true;
+  // Forced false and unchangeable on Android -- see SettingsScreen's
+  // matching Switch comment and [[project_android_bluetooth_recognition]]
+  // project memory for why.
+  bool _recognitionEnabled = !Platform.isAndroid;
   bool _lastResponseCorrect = false;
   // Settings screen preferences (morse_icr_spec.md section 35), loaded
   // from [_appSettingsStore] in initState and applied to the audio
@@ -250,17 +253,49 @@ class _TrainingScreenState extends State<TrainingScreen>
     } else {
       final turnEngine = TurnAudioEngine(answerSpeaker: _answerSpeaker);
       _turnAudioEngine = turnEngine;
-      _trainingEngine = TrainingEngine(turnPlayer: turnEngine);
-      // iOS-only (see KeepAliveAudioLoop's own doc comment): it exists
-      // purely to keep iOS's UIBackgroundModes "audio" grant continuously
-      // satisfied. Android has no equivalent heuristic to satisfy -- once
-      // the foreground service (section 42, Android background audio) is
-      // running, the process stays scheduled regardless of what audio is
-      // or isn't playing at any given instant, so this near-silent tone
-      // would just be redundant background CPU/battery use there. Every
-      // call site below already reads this via `?.`, so leaving it null
-      // on Android makes them all no-ops for free.
-      if (Platform.isIOS) _keepAliveLoop = KeepAliveAudioLoop();
+      _trainingEngine = TrainingEngine(
+        turnPlayer: turnEngine,
+        // Compensates for a measured, consistent platform output-
+        // pipeline latency between a turn's play() being issued and its
+        // audio actually becoming audible -- see
+        // TrainingEngine's own responseWindowLatencyCompensation doc
+        // comment and [[project_android_bluetooth_recognition]] project
+        // memory for the on-device data this is based on (Moto G Play
+        // 2024, 2026-09-10: a ~300ms measured offset, consistent across
+        // both wired and Bluetooth output). Android-only for now --
+        // this hasn't been measured on iOS, and this app's existing
+        // recognition-timing work there predates this compensation, so
+        // introducing an unverified shift risks regressing what already
+        // works. Revisit if iOS ever shows the same systematic pattern.
+        responseWindowLatencyCompensation: Platform.isAndroid
+            ? const Duration(milliseconds: 300)
+            : Duration.zero,
+      );
+      // Originally iOS-only (see KeepAliveAudioLoop's own doc comment):
+      // it exists purely to keep iOS's UIBackgroundModes "audio" grant
+      // continuously satisfied, which Android's foreground service
+      // (section 42, Android background audio) doesn't need -- once
+      // that's running, the process stays scheduled regardless of what
+      // audio is or isn't playing at any given instant.
+      //
+      // Enabled on Android too as of 2026-09-10, for an unrelated
+      // reason: investigating a reported per-character stepped volume
+      // fade-in (Moto G Play 2024, confirmed on both wired and
+      // Bluetooth output, confirmed not caused by anything this app's
+      // own code directly controls -- audio focus, setVolume() calls,
+      // and just_audio's own buffering are all clean; see
+      // [[project_android_bluetooth_recognition]] project memory).
+      // Bill's own recollection: the fade wasn't noticed until *after*
+      // Speech Recognition was disabled on Android the same day, which
+      // had been keeping the microphone continuously open between
+      // characters. Working theory: with nothing else keeping the
+      // audio subsystem active, each turn's play() call now wakes it
+      // from idle fresh, and this near-silent continuous loop
+      // (previously idle -- unused -- on Android) keeps it "hot"
+      // between turns the same way Speech Recognition's own mic
+      // activity apparently had been, incidentally. Unconfirmed whether
+      // this actually fixes it.
+      _keepAliveLoop = KeepAliveAudioLoop();
     }
     _problemCharacterStore =
         widget._injectedProblemCharacterStore ?? FileProblemCharacterStore();
@@ -349,7 +384,8 @@ class _TrainingScreenState extends State<TrainingScreen>
         _recognitionTimeMs = settings.recognitionTimeMs;
         _extraGapMs = settings.extraGapMs;
         _voiceEnabled = settings.voiceEnabled;
-        _recognitionEnabled = settings.recognitionEnabled;
+        _recognitionEnabled =
+            !Platform.isAndroid && settings.recognitionEnabled;
         // Excludes Word even if a learner selected it before it was
         // hidden from the chip row above -- otherwise a persisted
         // selection of just Word would restore to an active set with no
@@ -696,15 +732,6 @@ class _TrainingScreenState extends State<TrainingScreen>
     } catch (e) {
       logDebug('start: reconfigure/activate failed: $e');
     }
-    // See TurnAudioEngine.warmUp's own doc comment -- absorbs a cold
-    // player's one-time platform audio warm-up latency on a throwaway
-    // buffer, a no-op after the first call against an already-warm
-    // player, so this is safe to await on every Start.
-    try {
-      await _turnAudioEngine?.warmUp().timeout(externalCallTimeout);
-    } catch (e) {
-      logDebug('start: audio warm-up failed: $e');
-    }
     trainingAudioHandler?.reportTraining();
     // Fire-and-forget -- a denial doesn't block training, it just means
     // Android's foreground-service notification (and lock-screen card)
@@ -747,6 +774,12 @@ class _TrainingScreenState extends State<TrainingScreen>
         logDebug('start: startListening failed: $e');
       }
     }
+    // See TurnAudioEngine.markSessionStart's own doc comment -- the
+    // first-turn primer needs to fire on every Start/Resume, not just
+    // once per player instance/app launch (confirmed on-device
+    // 2026-09-11: a Stop then Start, same player, got no primer and the
+    // first-turn clipping came right back).
+    _turnAudioEngine?.markSessionStart();
     _trainingEngine.start(
       characters: characters,
       wpm: _wpm.toDouble(),
@@ -898,6 +931,12 @@ class _TrainingScreenState extends State<TrainingScreen>
         logDebug('resume: startListening failed: $e');
       }
     }
+    // See TurnAudioEngine.markSessionStart's own doc comment -- the
+    // first-turn primer needs to fire on every Start/Resume, not just
+    // once per player instance/app launch (confirmed on-device
+    // 2026-09-11: a Stop then Start, same player, got no primer and the
+    // first-turn clipping came right back).
+    _turnAudioEngine?.markSessionStart();
     _trainingEngine.start(
       characters: characters,
       wpm: _wpm.toDouble(),
