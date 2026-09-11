@@ -1,30 +1,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <!-- speech_to_text: lets the learner say each character aloud
-         (morse_icr_spec.md section 27) instead of it only ever being
-         announced by the computer. -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- RECORD_AUDIO and BLUETOOTH_CONNECT (speech_to_text's own
+         Bluetooth SCO switching) previously lived here for Speech
+         Recognition, removed 2026-09-11 now that Speech Recognition is
+         permanently disabled on Android (iOS-only, see
+         TrainingScreen._recognitionEnabled and
+         [[project_android_bluetooth_recognition]] project memory: a real
+         transcription-accuracy ceiling for rapid single-character
+         speech, not a fixable bug). Neither permission is needed for
+         anything else this app does, and dropping them simplifies the
+         Play Store listing (Data Safety form, permission review) ahead
+         of first submission, since no microphone access is ever
+         requested on Android at all now.
 
-    <!-- speech_to_text (Android 12+/API 31+): the plugin's own native
-         Kotlin side (SpeechToTextPlugin.kt's optionallyStartBluetooth/
-         optionallyStopBluetooth) already calls
-         BluetoothHeadset.startVoiceRecognition() around every listen
-         session to switch a connected Bluetooth headset into SCO/voice
-         mode, but it silently no-ops (bluetoothDisabled stays true)
-         without this permission, which this app never declared before.
-         Investigated on-device (Moto G Play 2024, 2026-09-08): with a
-         Bluetooth headset connected (required for recognition at all,
-         see hasNonSpeakerAudioOutput's own doc comment), recognition was
-         wildly unreliable, sometimes multi-second-delayed but working,
-         sometimes an outright restart-storm (the native recognizer
-         reporting done/notListening within single-digit milliseconds of
-         starting, thousands of times, zero results the entire session).
-         Without this permission, mic routing over Bluetooth was left
-         entirely to whatever the OS did by default rather than the
-         plugin's own explicit, already-built handling for it. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
-
-    <!-- just_audio: playing a local/generated audio source routes through
+         just_audio: playing a local/generated audio source routes through
          ExoPlayer via just_audio's own loopback HTTP proxy on
          127.0.0.1, which needs INTERNET to open a socket at all.
          Confirmed on-device (Moto G Play, 2024): without this, every
@@ -118,11 +107,6 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
-        </intent>
-        <!-- speech_to_text: required on Android 11+ (SDK 30+) to see the
-             on-device speech recognition service at all. -->
-        <intent>
-            <action android:name="android.speech.RecognitionService"/>
         </intent>
     </queries>
 </manifest>
