@@ -116,6 +116,7 @@ Morse ICR Trainer was inspired by the Instant Character Recognition training met
 Morse ICR Trainer is an independent application and is not affiliated with or endorsed by CW Innovations or Morse Code World.
 
 CW Innovations — https://cwinnovations.net
+
 Morse Code World — https://morsecode.world
 
 ---
