@@ -43,6 +43,8 @@ Once a session is running, a Pause button appears next to Stop. Pause holds the 
 
 All three can be changed mid-session and take effect starting with the next character, never interrupting one already playing.
 
+Recognition Time itself is engineered to be sample-accurate (well under a millisecond) — the silence between the Morse tone and the computer's spoken answer is rendered directly into the audio buffer, not timed live. In practice, allow a tolerance of about ±15ms when comparing it against a recording, and don't be alarmed if a few characters — "three," "four," "five," "six," and "seven" — appear to start their answer a bit later than the rest when measured this way: those five all begin with a soft consonant sound that ramps up in volume gradually rather than starting instantly, which can look like extra delay on a waveform even though the audio genuinely started on time.
+
 ### Character Set & Focus
 
 The Character Set chips (A-Z, 0-9, Punct) choose which characters are trained. Multiple chips can be selected at once.
