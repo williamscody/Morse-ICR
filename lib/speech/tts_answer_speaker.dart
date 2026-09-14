@@ -23,7 +23,8 @@ import 'tts_voice_option.dart';
 ///
 /// Pre-renders every speakable character's word once (via
 /// [FlutterTts.synthesizeToFile]), reads the result into memory as raw
-/// 16-bit-PCM/44100Hz samples with trailing silence trimmed, and caches
+/// 16-bit-PCM/44100Hz samples with leading and trailing silence trimmed,
+/// and caches
 /// those samples for two consumers: [TurnAudioEngine] splices them
 /// directly into a combined per-turn buffer (the pre-mix architecture,
 /// morse_icr project memory) via [cachedSamplesFor], and [speak] itself
@@ -390,7 +391,9 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     // buffer -- speak() falls back to live synthesis for it instead.
     try {
       final wav = convertToPcm16Wav(rendered, targetSampleRate: _sampleRate);
-      final samples = trimTrailingSilence(readPcm16Samples(wav));
+      final samples = trimLeadingSilence(
+        trimTrailingSilence(readPcm16Samples(wav)),
+      );
       // Guards against a *previous* run's truncated file, not just a
       // fresh one this call just avoided caching above -- the file
       // this reads back was already sitting on disk (this whole
@@ -425,6 +428,21 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
     }
   }
 
+  // Bump whenever [_prerenderCharacter]'s own rendering/trimming
+  // pipeline changes in a way that should invalidate every
+  // previously-cached file -- [_fileNameFor]'s hash input folds this in
+  // specifically so such a change can't silently no-op against a
+  // device's existing cache the way [trimLeadingSilence] (2026-09-13)
+  // initially did: since the cache key was otherwise unchanged,
+  // [_prerenderCharacter]'s own `!await file.exists()` guard kept
+  // reusing every already-cached (pre-fix, untrimmed-leading-silence)
+  // file forever on a real device whose cache predated the fix --
+  // confirmed on-device as the actual cause of a "some specific
+  // characters still have a longer pause before their answer" report
+  // that survived the fix itself (see
+  // [[project_response_time_gap_investigation]]).
+  static const _cacheFormatVersion = 2;
+
   // Encodes as the character's code unit rather than the character
   // itself, since some characters (e.g. "/") aren't valid in a file
   // name; includes a hash of the spoken text and chosen voice so a
@@ -442,7 +460,7 @@ class TtsAnswerSpeaker implements AnswerSpeaker {
   // FNV-1a is a plain deterministic content hash, stable across runs.
   String _fileNameFor(String character, String spokenText) =>
       'spoken_${character.codeUnitAt(0)}_'
-      '${_stableHash('$spokenText $_voiceIdentifier')}.wav';
+      '${_stableHash('$spokenText $_voiceIdentifier v$_cacheFormatVersion')}.wav';
 
   static int _stableHash(String input) {
     var hash = 0x811c9dc5;

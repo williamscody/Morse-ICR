@@ -17,11 +17,9 @@ import '../training/problem_character_store.dart';
 /// Every chip [_scores] has an entry for -- i.e. every character that's
 /// actually been *attempted* in some training session, regardless of
 /// whether it's currently selected here -- is heat-map colored from red
-/// (few correct answers) to green (many) (see [_heatMapColor]). A
-/// character with no entry at all (never trained) stays transparent.
-/// The underlying tally itself is no longer shown on the chip (removed
-/// 2026-09-10, Bill's request) -- [_scores]/[_attempts] still track it
-/// for the coloring and the Focusizer's own ranking. This coloring is entirely
+/// (few correct answers) to green (many), with the count itself printed
+/// below the character (see [_heatMapColor]). A character with no entry
+/// at all (never trained) stays transparent. This coloring is entirely
 /// independent of [_selected] (the border below is what shows that):
 /// training a full character set like A-Z on the main screen, without
 /// ever touching this screen's Focus picker, still colors every one of
@@ -388,48 +386,66 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
                                             // tally [RichText] below.
                                             softWrap: false,
                                             overflow: TextOverflow.visible,
-                                            style: TextStyle(
-                                              color: textColor,
-                                              fontSize: 22,
-                                              fontWeight: FontWeight.w600,
+                                            style: TextStyle(color: textColor),
+                                          ),
+                                          // RichText, not Text -- a bare Text
+                                          // here would make the score digits
+                                          // ambiguous with the digit *chips*
+                                          // ('0'-'9' are themselves characters
+                                          // in [allCharacters]) for any test or
+                                          // tooling that finds chips by their
+                                          // label text.
+                                          RichText(
+                                            textScaler: MediaQuery.textScalerOf(
+                                              context,
+                                            ),
+                                            // A tally in the high teens/twenties
+                                            // is exactly as wide as the chip's
+                                            // available label width for some
+                                            // digit pairs but not others (font
+                                            // metrics vary per digit) --
+                                            // without these, [RichText]'s
+                                            // default wrapping would break
+                                            // right between the two digits,
+                                            // pushing the second one out past
+                                            // the chip's own rounded bounds
+                                            // instead of keeping the tally on
+                                            // one line.
+                                            softWrap: false,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.visible,
+                                            text: TextSpan(
+                                              text: '$score',
+                                              style: TextStyle(
+                                                color: textColor,
+                                                fontSize: 10,
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
                                       showCheckmark: false,
-                                      // vertical: 13 makes this chip's own
-                                      // natural (content-driven) height come
-                                      // out to ~58.3 -- matching the grid
-                                      // cell's own [mainAxisExtent] below, so
-                                      // the chip's painted background fills
-                                      // the cell with no visible gap inside
-                                      // the selection ring overlay. Confirmed
-                                      // via a throwaway widget-test probe
-                                      // (fontSize 22 / vertical 13 -> 59.0,
-                                      // clamped to the grid's 58.3). Removing
-                                      // the tally number (2026-09-10) shrank
-                                      // this chip's natural content back down
-                                      // to a single line -- this padding
-                                      // (previously 5.6, tuned for that
-                                      // single-line case pre-tally) restores
-                                      // the fuller, two-line-era chip size
-                                      // Bill wants kept even with the tally
-                                      // gone, now filled by a larger font
-                                      // instead of a second line (Bill,
-                                      // 2026-09-11: "restore the chip size to
-                                      // their prior dimensions, and... now
-                                      // that we have the room, increase the
-                                      // font size"). [shrinkWrap] is required
+                                      // Trims the chip's own default vertical
+                                      // padding (7 a side) down to 5.6 a
+                                      // side -- 8 horizontal is the
+                                      // (unchanged) default, kept explicit
+                                      // only because [padding] is one
+                                      // EdgeInsets -- for a precise 10%
+                                      // reduction in overall chip height
+                                      // (48 -> 43.2 logical pixels, measured
+                                      // via [tester.getSize] on an 'A' chip)
+                                      // with the width untouched (Bill,
+                                      // 2026-09-02). [shrinkWrap] is required
                                       // alongside it: Material's default tap
                                       // target enforces a 48-tall minimum
                                       // that would otherwise silently
-                                      // re-inflate the chip regardless of
-                                      // this padding.
+                                      // re-inflate the chip back to its old
+                                      // height regardless of this padding.
                                       materialTapTargetSize:
                                           MaterialTapTargetSize.shrinkWrap,
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 8,
-                                        vertical: 13,
+                                        vertical: 5.6,
                                       ),
                                       backgroundColor: color,
                                       selectedColor: color,

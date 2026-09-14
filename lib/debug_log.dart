@@ -94,6 +94,21 @@ final ValueNotifier<List<String>> debugLogEntries = ValueNotifier([]);
 // 750ms primer + TurnAudioEngine.markSessionStart firing it on every
 // Start/Resume, not just app launch). See
 // [[project_android_bluetooth_recognition]] for the full resolution.
+//
+// 2026-09-13: turned back on, then off again -- investigated an
+// iOS-only "some characters have a longer response gap" report
+// (specifically digits 3-7). Screen-recording, speech-recognition, and
+// stale-TTS-cache theories were all raised and disproven in turn.
+// Concluded: not an app bug -- direct waveform inspection showed
+// "three/four/five/six/seven" (all fricative-initial: th-/f-/f-/s-/s-)
+// depart from true silence at the *same* elapsed time as every other
+// character, just with a more gradual amplitude ramp, which is what a
+// naive amplitude-threshold audio analysis was misreading as a longer
+// gap. recognitionTimeMs is accurate and consistent for every
+// character. See [[project_response_time_gap_investigation]] for the
+// full writeup. [trimLeadingSilence] and TtsAnswerSpeaker's
+// `_cacheFormatVersion` are real, unrelated improvements from this
+// investigation and stay regardless.
 const bool _loggingEnabled = false;
 
 void logDebug(String message) {

@@ -44,5 +44,15 @@ post_install do |installer|
         config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
       end
     end
+    # Xcode 26's build system rejects anything below 15.0, but the
+    # generated Pods-RunnerTests aggregate target (from Podfile's
+    # `inherit! :search_paths`) doesn't pick up the `platform :ios,
+    # '15.0'` line above on some of its configs -- flutter_tools does not
+    # currently override this here (unlike every other target's own
+    # deployment target, which flutter_additional_ios_build_settings
+    # already fixes), so it's forced explicitly.
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
   end
 end

@@ -61,4 +61,62 @@ void main() {
       expect(trimmed, samples);
     });
   });
+
+  group('trimLeadingSilence', () {
+    test('trims leading near-silence beyond the margin', () {
+      final samples = Int16List.fromList([
+        0, 0, 0, 0, 0, // leading near-silence
+        5000, 6000, 5000, // loud
+      ]);
+
+      final trimmed = trimLeadingSilence(
+        samples,
+        thresholdAmplitude: 328,
+        marginSamples: 1,
+      );
+
+      expect(trimmed, [0, 5000, 6000, 5000]);
+    });
+
+    test('leaves loud audio starting from the beginning untouched', () {
+      final samples = Int16List.fromList([5000, 6000, 5000]);
+
+      final trimmed = trimLeadingSilence(samples, marginSamples: 0);
+
+      expect(trimmed, samples);
+    });
+
+    test('returns the original samples unchanged when entirely silent', () {
+      final samples = Int16List.fromList([0, 0, 0, 0]);
+
+      final trimmed = trimLeadingSilence(samples);
+
+      expect(trimmed, samples);
+    });
+
+    test('keeps samples at or below the threshold amplitude in the middle '
+        'of loud audio', () {
+      final samples = Int16List.fromList([0, 0, 0, 5000, 100, 5000]);
+
+      final trimmed = trimLeadingSilence(
+        samples,
+        thresholdAmplitude: 328,
+        marginSamples: 0,
+      );
+
+      expect(trimmed, [5000, 100, 5000]);
+    });
+
+    test('margin never extends before the start of the original samples', () {
+      final samples = Int16List.fromList([0, 0, 5000]);
+
+      final trimmed = trimLeadingSilence(
+        samples,
+        thresholdAmplitude: 328,
+        marginSamples: 100,
+      );
+
+      expect(trimmed, samples);
+    });
+  });
 }

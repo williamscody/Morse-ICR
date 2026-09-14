@@ -46,6 +46,10 @@ import 'widgets/stepped_int_control.dart';
 //
 // 2026-09-02: turned back on, then off again the same day -- see
 // debug_log.dart's matching note for what got fixed.
+//
+// 2026-09-13: turned back on, then off, then on, then off again -- see
+// debug_log.dart's matching note on the response-time gap investigation
+// (resolved: not a bug).
 const bool _showDebugLogPanel = false;
 
 /// The training screen wired to the character-generation loop,
