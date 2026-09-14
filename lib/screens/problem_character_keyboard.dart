@@ -37,9 +37,20 @@ import '../training/problem_character_store.dart';
 /// from [_scores]/[_attempts]' latest persisted totals every time this
 /// screen opens. See [_correctPercentage].
 class ProblemCharacterKeyboard extends StatefulWidget {
-  const ProblemCharacterKeyboard({super.key, required this.store});
+  const ProblemCharacterKeyboard({
+    super.key,
+    required this.store,
+    this.showResultsInTitle = false,
+  });
 
   final ProblemCharacterStore store;
+
+  // True when this screen also functions as the results view for Speech
+  // Recognition scoring (iPhone-only, [TrainingScreen] computes this from
+  // Platform.isIOS && recognitionEnabled) -- swaps the "Focus" title for
+  // "Focus/Results" so the connection to the heat-map/score data below is
+  // clearer while recognition is what's actually populating those scores.
+  final bool showResultsInTitle;
 
   @override
   State<ProblemCharacterKeyboard> createState() =>
@@ -248,7 +259,16 @@ class _ProblemCharacterKeyboardState extends State<ProblemCharacterKeyboard> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Focus'),
+        // "Focus/Results" is too wide for the title area once the Clear/
+        // Done actions squeeze it (it was truncating to "Focus/R...");
+        // wrapping "Results" onto its own line needs a taller toolbar to
+        // avoid clipping the second line (Bill, 2026-09-13).
+        toolbarHeight: widget.showResultsInTitle ? kToolbarHeight * 1.6 : null,
+        title: Text(
+          widget.showResultsInTitle ? 'Focus/\nResults' : 'Focus',
+          maxLines: 2,
+          softWrap: true,
+        ),
         actions: [
           TextButton(
             onPressed: _loaded ? _clear : null,

@@ -322,6 +322,7 @@ class _SessionRowState extends State<_SessionRow> {
           minLines: 1,
           maxLines: 3,
           textInputAction: TextInputAction.done,
+          textCapitalization: TextCapitalization.sentences,
           onSubmitted: widget.onNotesChanged,
         ),
       ],

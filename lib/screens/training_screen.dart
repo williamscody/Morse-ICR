@@ -1182,10 +1182,21 @@ class _TrainingScreenState extends State<TrainingScreen>
     setState(() => _countdownTimerConfig = config);
   }
 
+  // iPhone-only (Bill, 2026-09-13): while Speech Recognition is on, the
+  // Focus keyboard doubles as the results view for its per-character
+  // heat-map/score data, so both the main-screen button and the Focus
+  // page's own title read "Focus/Results" instead of plain "Focus" to
+  // make that connection clearer. Android is excluded regardless of
+  // [_recognitionEnabled] per Bill's explicit request.
+  bool get _showFocusResultsLabel => Platform.isIOS && _recognitionEnabled;
+
   Future<void> _openProblemCharacterKeyboard() async {
     final characters = await Navigator.of(context).push<List<String>>(
       MaterialPageRoute(
-        builder: (_) => ProblemCharacterKeyboard(store: _problemCharacterStore),
+        builder: (_) => ProblemCharacterKeyboard(
+          store: _problemCharacterStore,
+          showResultsInTitle: _showFocusResultsLabel,
+        ),
       ),
     );
     // Null means the learner backed out without ever tapping Done --
@@ -1595,9 +1606,13 @@ class _TrainingScreenState extends State<TrainingScreen>
                                 ? null
                                 : _openProblemCharacterKeyboard,
                             child: Text(
-                              _problemCharacters == null
-                                  ? 'Focus (none)'
-                                  : 'Focus (${_problemCharacters!.length} active)',
+                              _showFocusResultsLabel
+                                  ? (_problemCharacters == null
+                                        ? 'Focus/Results (none)'
+                                        : 'Focus/Results (${_problemCharacters!.length} active)')
+                                  : (_problemCharacters == null
+                                        ? 'Focus (none)'
+                                        : 'Focus (${_problemCharacters!.length} active)'),
                             ),
                           ),
                         ),
