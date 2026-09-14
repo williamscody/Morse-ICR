@@ -10,7 +10,7 @@ Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android
 
 - Adjustable Character Speed, Recognition Time, and Extra Gap to tune session difficulty
 - Pause and Resume a running session without losing your place
-- Sub-millisecond Recognition Time accuracy
+- +/- 15 ms Recognition Time accuracy
 - Character Set selection (A-Z, 0-9, punctuation), or a custom Focus practice list
 - Focus keyboard with per-character heat-map accuracy coloring and an all-time "X% Correct" summary
 - Focusizer slider that auto-builds a practice list from your worst- to best-performing characters
