@@ -23,6 +23,14 @@ Morse ICR Trainer is a Flutter-based Morse code training app for iOS and Android
 - All settings persist across app restarts
 - In-app Help page with a jump-to-section table of contents
 
+## Release Notes
+
+### v1.0.2
+
+- Training Log now shows a per-session SR Score on iOS, calculated from Speech Recognition hits and misses, and flags sessions where Voice was off
+- New "Missing Fast" training technique, documented in a new Help section alongside an explanation of SR Score
+- Help page now has a search field that filters both the Contents list and the body sections
+
 ## Help
 
 The following is the content of the app's in-app Help page.
