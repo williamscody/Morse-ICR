@@ -28,6 +28,8 @@ class TrainingSessionRecord {
     required this.recognitionTimeMs,
     required this.extraGapMs,
     this.notes = '',
+    this.voiceEnabled = true,
+    this.vrScorePercent,
   });
 
   /// Unique per session -- derived from [startedAt]'s microsecond
@@ -64,6 +66,23 @@ class TrainingSessionRecord {
   /// something.
   final String notes;
 
+  /// The "Voice" setting (TTS voice output, section 35) in effect when
+  /// the session started -- distinct from Speech Recognition; see
+  /// [TrainingScreen]'s `_sessionStartVoiceEnabled`. Drives the log's
+  /// "Voice Off" notation when false. Defaults to true (matching
+  /// [AppSettings]'s own default) for records saved before this field
+  /// existed, so a legacy entry doesn't wrongly show as Voice Off.
+  final bool voiceEnabled;
+
+  /// This session's voice-recognition percent-correct score, or null when
+  /// Speech Recognition was off for the session or it had no scored
+  /// attempts. Independent of [voiceEnabled] -- Speech Recognition
+  /// (listening) and Voice (TTS speaking) are separate settings that can
+  /// be on or off independently. Distinct from the all-time Problem
+  /// Character scores: this is per-session, computed from the same
+  /// hit/miss tallies before they're folded into that cumulative store.
+  final int? vrScorePercent;
+
   TrainingSessionRecord copyWith({String? notes}) => TrainingSessionRecord(
     id: id,
     startedAt: startedAt,
@@ -73,6 +92,8 @@ class TrainingSessionRecord {
     recognitionTimeMs: recognitionTimeMs,
     extraGapMs: extraGapMs,
     notes: notes ?? this.notes,
+    voiceEnabled: voiceEnabled,
+    vrScorePercent: vrScorePercent,
   );
 
   Map<String, Object?> toJson() => {
@@ -84,6 +105,8 @@ class TrainingSessionRecord {
     'recognitionTimeMs': recognitionTimeMs,
     'extraGapMs': extraGapMs,
     'notes': notes,
+    'voiceEnabled': voiceEnabled,
+    'vrScorePercent': vrScorePercent,
   };
 
   factory TrainingSessionRecord.fromJson(Map<String, Object?> json) =>
@@ -96,5 +119,7 @@ class TrainingSessionRecord {
         recognitionTimeMs: json['recognitionTimeMs'] as int? ?? 0,
         extraGapMs: json['extraGapMs'] as int? ?? 0,
         notes: json['notes'] as String? ?? '',
+        voiceEnabled: json['voiceEnabled'] as bool? ?? true,
+        vrScorePercent: json['vrScorePercent'] as int?,
       );
 }

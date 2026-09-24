@@ -127,6 +127,10 @@ final List<_HelpSection> _helpSections = [
       'The clock-with-arrow icon at the top left opens the Training Log: '
           'every completed session, with its date, time, duration, and '
           'the character set or Focus list that was active.',
+      'If Speech Recognition is turned on (iOS only), a SR Score will '
+          'appear in the log, indicating % correct. This works with both '
+          'Voice=On (regular ICR training), and Voice=Off ("missing '
+          'fast" training).',
       'Each entry can be given free-form notes. The log also shows your '
           'cumulative training time, and can be cleared or exported as a '
           'CSV file via the share sheet.',
@@ -166,6 +170,22 @@ final List<_HelpSection> _helpSections = [
           'turned out to be an accuracy ceiling, not a bug, so the '
           'Speech Recognition toggle is disabled on Android rather than '
           'left on to silently under-credit real answers.',
+    ],
+  ),
+  _HelpSection(
+    title: 'Missing Fast',
+    icon: Icons.flash_on,
+    color: Colors.orange,
+    paragraphs: [
+      'Turning off Voice in Settings trains you to "miss fast." Hear the '
+          'code, then speak the character aloud -- no confirmation voice '
+          'will follow, just like a real QSO.',
+      'The idea is to immediately let go of any misses, readying your '
+          'mind for the next character. Even the best operators can\'t '
+          'decode every character, but they\'ve learned not to dwell on '
+          'the missed ones.',
+      'The log will indicate a "Missing Fast" session by flagging '
+          '"Voice Off."',
     ],
   ),
   _HelpSection(
@@ -310,9 +330,19 @@ class _HelpScreenState extends State<HelpScreen> {
     for (final _ in _helpSections) GlobalKey(),
   ];
 
+  // Filters both the Contents list and the body sections below to only
+  // those matching the search field, rather than just scrolling to the
+  // first match -- a short help page like this one is easier to scan
+  // once everything irrelevant to the query is out of the way.
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(() {
+      setState(() => _query = _searchController.text.trim().toLowerCase());
+    });
     final title = widget.initialSectionTitle;
     if (title == null) return;
     final index = _helpSections.indexWhere((s) => s.title == title);
@@ -325,6 +355,33 @@ class _HelpScreenState extends State<HelpScreen> {
       if (mounted) _jumpTo(index);
     });
   }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  bool _matchesQuery(_HelpSection section) {
+    if (_query.isEmpty) return true;
+    if (section.title.toLowerCase().contains(_query)) return true;
+    for (final paragraph in section.paragraphs) {
+      if (paragraph.toLowerCase().contains(_query)) return true;
+    }
+    for (final link in section.links) {
+      if (link.label.toLowerCase().contains(_query)) return true;
+    }
+    return false;
+  }
+
+  /// Indices into [_helpSections], not a filtered copy of the list
+  /// itself -- [_sectionKeys] and [_jumpTo] are both keyed by the
+  /// original index, so every place that reads a search result needs
+  /// that index, not just the section it points to.
+  List<int> get _matchingIndices => [
+    for (var i = 0; i < _helpSections.length; i++)
+      if (_matchesQuery(_helpSections[i])) i,
+  ];
 
   void _jumpTo(int index) {
     final sectionContext = _sectionKeys[index].currentContext;
@@ -339,6 +396,7 @@ class _HelpScreenState extends State<HelpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final matchingIndices = _matchingIndices;
     return Scaffold(
       appBar: AppBar(title: const Text('Help')),
       // SelectionArea (not individual SelectableText widgets) makes
@@ -366,25 +424,58 @@ class _HelpScreenState extends State<HelpScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Contents',
-                      style: Theme.of(context).textTheme.titleLarge,
+                    TextField(
+                      controller: _searchController,
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'Search Help',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchController.text.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.clear),
+                                tooltip: 'Clear search',
+                                onPressed: _searchController.clear,
+                              ),
+                        isDense: true,
+                        border: const OutlineInputBorder(
+                          borderRadius: BorderRadius.all(
+                            Radius.circular(12),
+                          ),
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    for (var i = 0; i < _helpSections.length; i++)
-                      _TocEntry(
-                        section: _helpSections[i],
-                        onTap: () => _jumpTo(i),
-                      ),
-                    const SizedBox(height: 24),
-                    const Divider(),
                     const SizedBox(height: 16),
-                    for (var i = 0; i < _helpSections.length; i++) ...[
-                      _HelpSectionView(
-                        key: _sectionKeys[i],
-                        section: _helpSections[i],
+                    if (matchingIndices.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        child: Text(
+                          'No results for "${_searchController.text.trim()}".',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      )
+                    else ...[
+                      Text(
+                        'Contents',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      const SizedBox(height: 32),
+                      const SizedBox(height: 8),
+                      for (final i in matchingIndices)
+                        _TocEntry(
+                          section: _helpSections[i],
+                          onTap: () => _jumpTo(i),
+                        ),
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      const SizedBox(height: 16),
+                      for (final i in matchingIndices) ...[
+                        _HelpSectionView(
+                          key: _sectionKeys[i],
+                          section: _helpSections[i],
+                        ),
+                        const SizedBox(height: 32),
+                      ],
                     ],
                     Center(
                       child: Text(

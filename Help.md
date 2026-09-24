@@ -1,0 +1,125 @@
+# Help
+
+## Contents
+
+- [Getting Started](#getting-started)
+- [Character Speed, Recognition Time & Extra Gap](#character-speed-recognition-time--extra-gap)
+- [Character Set & Focus](#character-set--focus)
+- [Timer](#timer)
+- [Training Log](#training-log)
+- [Voice & Speech Recognition (Experimental)](#voice--speech-recognition-experimental)
+- [Missing Fast](#missing-fast)
+- [Punctuation Speaking](#punctuation-speaking)
+- [Morse & Voice Audio](#morse--voice-audio)
+- [Random Character Order](#random-character-order)
+- [Getting the Best Recognition Accuracy (iOS)](#getting-the-best-recognition-accuracy-ios)
+- [Voice Quality](#voice-quality)
+- [Acknowledgments](#acknowledgments)
+
+---
+
+## Getting Started
+
+Morse ICR Trainer plays a Morse code character, then gives you a short window to answer -- by speaking or simply knowing it -- before the computer's voice announces the character out loud. Answering correctly before the computer does is "beating the computer," this app's core training mechanic.
+
+Tap Start on the main screen to begin a session. Tap Stop, or let an active Timer memory count down to zero, to end one.
+
+Once a session is running, a Pause button appears next to Stop. Pause holds the session exactly where it is -- character set, Timer countdown, and elapsed time all stay put -- until you tap Resume to continue, or Stop to end the session from there.
+
+## Character Speed, Recognition Time & Extra Gap
+
+- Character Speed (WPM): how fast each Morse character is played, in words per minute.
+- Recognition Time: how long you have to answer before the computer announces the character for you. Shorter times make training harder.
+- Extra Gap: extra silence inserted before the next character starts. It does not affect whether you beat the computer -- it only gives Speech Recognition a little more breathing room to finish processing your answer before the next round begins.
+
+All three can be changed mid-session and take effect starting with the next character, never interrupting one already playing.
+
+## Character Set & Focus
+
+The Character Set chips (A-Z, 0-9, Punct) choose which characters are trained. Multiple chips can be selected at once.
+
+The Focus button opens a full keyboard of every common Morse character. Tap characters on or off to build a custom practice list, then tap Done. A Focus list, once set, replaces the chips above entirely and stays active until you select a chip again or edit the Focus list. Clear removes every character from the list.
+
+On the Focus keyboard, each character is colored by your all-time performance with it: red means it's mostly been missed, green means mostly correct, with everything in between scaled against your best-performing character. A character with no color at all has never come up in a session yet.
+
+Below the character grid (iOS only -- it needs Speech Recognition score data, which Android doesn't have), the Focusizer slider builds a practice list for you automatically from those same scores. Drag it left to right to select your worst-performing characters first, adding progressively better-performing ones as you go further right; drag it all the way to the left to clear the selection. The red − and green + buttons next to the slider step it one character at a time, and the number next to "Focusizer" always shows how many characters are currently selected. Tapping a chip directly still overrides the slider for that one character.
+
+## Timer
+
+The Timer row stores three duration memories and lets you select one as the active countdown for your next session. When the active timer reaches zero, the session stops automatically, the same as tapping Stop yourself.
+
+Tap the Timer row (only available when not training) to edit any memory's duration or change which one, if any, is selected. Selecting none turns the timer off.
+
+## Training Log
+
+The clock-with-arrow icon at the top left opens the Training Log: every completed session, with its date, time, duration, and the character set or Focus list that was active.
+
+If Speech Recognition is turned on (iOS only), a SR Score will appear in the log, indicating % correct. This works with both Voice=On (regular ICR training), and Voice=Off ("missing fast" training).
+
+Each entry can be given free-form notes. The log also shows your cumulative training time, and can be cleared or exported as a CSV file via the share sheet.
+
+## Voice & Speech Recognition (Experimental)
+
+Voice controls whether the computer speaks each character's answer out loud once your Recognition Time expires.
+
+Speech Recognition listens for you speaking the answer and credits you if it hears you say it in time. It requires headphones (wired or Bluetooth). If Speech Recognition is on and no headphones are connected, the app will ask you to connect them or turn the toggle off.
+
+Speech Recognition is an experimental feature, and iPhone-only. It relies on your device's on-board speech recognizer and voice-activity detection, both of which are inherently imperfect -- expect occasional false credit for an answer you didn't actually say in time, occasional missed credit for one you did, and letters that sound alike (B/P, M/N, and similar pairs) being confused for each other. Background noise, microphone placement, and accent all affect accuracy, and behavior can vary between individual iPhones. See "Getting the Best Recognition Accuracy" below for ways to reduce these errors, but some baseline error rate is inherent to the technology and not fully eliminable through settings.
+
+Android: Speech Recognition is unavailable, not just untested. After an extensive investigation, Android's speech recognizer -- both its on-device and network-based modes -- could not be made to reliably transcribe the kind of rapid, isolated single-character answers this app needs, even after fixing several real underlying bugs along the way. That turned out to be an accuracy ceiling, not a bug, so the Speech Recognition toggle is disabled on Android rather than left on to silently under-credit real answers.
+
+## Missing Fast
+
+Turning off Voice in Settings trains you to "miss fast." Hear the code, then speak the character aloud -- no confirmation voice will follow, just like a real QSO.
+
+The idea is to immediately let go of any misses, readying your mind for the next character. Even the best operators can't decode every character, but they've learned not to dwell on the missed ones.
+
+The log will indicate a "Missing Fast" session by flagging "Voice Off."
+
+## Punctuation Speaking
+
+Choose how the computer announces two punctuation characters: "." as either "Period" or "Dot", and "/" as either "Slash" or "Stroke".
+
+## Morse & Voice Audio
+
+- Morse Pitch: the tone frequency of the Morse code sidetone, in Hz.
+- Morse Volume: playback volume of the Morse tone.
+- Voice Volume: playback volume of the computer's spoken answer, independent of Morse Volume.
+- Speech Voice (iOS only): which installed voice speaks the computer's answer. "Auto" (the default) picks the first higher-quality (Enhanced/Premium) English voice found installed; choose a specific voice by name instead if you have more than one installed and want a particular one -- see Voice Quality below for where to download additional voices.
+
+## Random Character Order
+
+When on (the default), characters are drawn randomly from the active set, with repeats allowed. Turning it off instead plays the active set's characters in a fixed, repeatable order -- useful mainly for isolating a specific accuracy issue rather than everyday training.
+
+## Getting the Best Recognition Accuracy (iOS)
+
+- A quiet room helps. Recognition timing is judged from the moment your speech first rises above the room's background noise, so a noisy room can delay real detection or trigger a false one.
+- Speak clearly and promptly, at a consistent distance from the mic.
+- Faster settings (short Recognition Time, high Character Speed) leave less margin for error -- an on-time answer can occasionally miss by a few tens of milliseconds. That's an inherent tradeoff of fast settings, not a defect.
+
+A few limits are inherent to any speech recognizer and not fixable through settings: some letters simply sound alike when spoken in isolation (B/P, M/N, and similar pairs), and a letter occasionally gets missed entirely rather than misheard. If recognition ever stops working entirely for a whole session, that is worth reporting -- these smaller misses are not.
+
+## Voice Quality
+
+The computer's spoken voice comes from your device's own text-to-speech system, not from Morse ICR Trainer itself -- so its clarity depends on which voice your device has installed and selected.
+
+- iOS: open Settings > General > Accessibility > Read and Speak > Voices > English, tap a voice (e.g. Samantha or Nathan), then tap the ⓘ info button next to it and download the Enhanced (or Premium, if offered) quality. Once it finishes downloading, use this app's own Settings > Speech Voice to pick that voice specifically -- leaving it on "Auto" just picks the first higher-quality English voice found installed, which may not be the one you meant if more than one is installed.
+- Android: open Settings > Accessibility > Text-to-speech output -- on some devices it's instead under Settings > System > Languages & input > Text-to-speech output, or on Samsung devices, Settings > General management > Text-to-speech (the exact path varies by device) -- and tap the gear icon next to the preferred engine, usually Google Text-to-speech Engine. Under Language, choose English (United States), then preview the available voices and pick the clearest one -- favor a voice labeled Network over Local, since Network voices use higher-quality neural synthesis closer to Samantha (Enhanced)'s naturalness. Android has no single named voice equivalent to Samantha, and no in-app "Speech Voice" picker like iOS has -- whichever voice you set as the system default here is the one it speaks with.
+
+## Acknowledgments
+
+Morse ICR Trainer was inspired by the Instant Character Recognition training methodology taught by CW Innovations and by the Morse Code training resources available at Morse Code World.
+
+Morse ICR Trainer is an independent application and is not affiliated with or endorsed by CW Innovations or Morse Code World.
+
+- [CW Innovations](https://cwinnovations.net)
+- [Morse Code World](https://morsecode.world)
+
+---
+
+Version 1.0.0-beta.1
+
+[Created by K3CDY, Cody Cabana Productions, LLC.](https://codycabanaproductions.com)
+
+☕ Enjoying Morse ICR Trainer?
+If you find the app useful, consider [buying me a coffee](https://buymeacoffee.com/codycabana). It helps support continued development.

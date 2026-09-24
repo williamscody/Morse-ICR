@@ -12,6 +12,8 @@ void main() {
       recognitionTimeMs: 500,
       extraGapMs: 100,
       notes: 'Had trouble with K and R.',
+      voiceEnabled: true,
+      vrScorePercent: 87,
     );
 
     final roundTripped = TrainingSessionRecord.fromJson(record.toJson());
@@ -24,6 +26,8 @@ void main() {
     expect(roundTripped.recognitionTimeMs, record.recognitionTimeMs);
     expect(roundTripped.extraGapMs, record.extraGapMs);
     expect(roundTripped.notes, record.notes);
+    expect(roundTripped.voiceEnabled, record.voiceEnabled);
+    expect(roundTripped.vrScorePercent, record.vrScorePercent);
   });
 
   test('fromJson defaults notes and settings to empty/zero when absent -- '
@@ -39,6 +43,8 @@ void main() {
     expect(record.wpm, 0);
     expect(record.recognitionTimeMs, 0);
     expect(record.extraGapMs, 0);
+    expect(record.voiceEnabled, true);
+    expect(record.vrScorePercent, null);
   });
 
   test('copyWith replaces only notes', () {
@@ -51,6 +57,8 @@ void main() {
       recognitionTimeMs: 500,
       extraGapMs: 100,
       notes: 'original',
+      voiceEnabled: true,
+      vrScorePercent: 87,
     );
 
     final updated = record.copyWith(notes: 'updated');
@@ -63,5 +71,7 @@ void main() {
     expect(updated.wpm, record.wpm);
     expect(updated.recognitionTimeMs, record.recognitionTimeMs);
     expect(updated.extraGapMs, record.extraGapMs);
+    expect(updated.voiceEnabled, record.voiceEnabled);
+    expect(updated.vrScorePercent, record.vrScorePercent);
   });
 }

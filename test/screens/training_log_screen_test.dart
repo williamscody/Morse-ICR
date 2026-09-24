@@ -240,11 +240,80 @@ void main() {
 
     expect(
       exportedCsv,
-      contains('Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes'),
+      contains(
+        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),SR Score,'
+        'Notes',
+      ),
     );
     expect(
       exportedCsv,
-      contains('08/20/26,09:00 AM,00:05:00,A-Z,90,500,0,first session'),
+      contains('08/20/26,09:00 AM,00:05:00,A-Z,90,500,0,,first session'),
     );
+  });
+
+  testWidgets('shows the VR score for a session with a voice-recognition '
+      'score, and nothing for one without', (tester) async {
+    final vrSession = TrainingSessionRecord(
+      id: 'vr',
+      startedAt: DateTime(2026, 8, 22, 9, 0),
+      duration: const Duration(minutes: 5),
+      focusSummary: 'A-Z',
+      wpm: 90,
+      recognitionTimeMs: 500,
+      extraGapMs: 0,
+      vrScorePercent: 87,
+    );
+    await tester.pumpWidget(
+      wrap(TrainingLogScreen(store: _FakeTrainingLogStore([vrSession, earlier]))),
+    );
+    await tester.pump();
+
+    expect(find.text('87% Right'), findsOneWidget);
+  });
+
+  testWidgets('shows Voice Off for a session with the Voice setting off, '
+      'and nothing for one with it on', (tester) async {
+    final voiceOffSession = TrainingSessionRecord(
+      id: 'voice-off',
+      startedAt: DateTime(2026, 8, 22, 9, 0),
+      duration: const Duration(minutes: 5),
+      focusSummary: 'A-Z',
+      wpm: 90,
+      recognitionTimeMs: 500,
+      extraGapMs: 0,
+      voiceEnabled: false,
+    );
+    await tester.pumpWidget(
+      wrap(
+        TrainingLogScreen(
+          store: _FakeTrainingLogStore([voiceOffSession, earlier]),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Off'), findsOneWidget);
+  });
+
+  testWidgets('shows both SR Score and Voice Off together -- Speech '
+      'Recognition and Voice are independent settings', (tester) async {
+    final session = TrainingSessionRecord(
+      id: 'both',
+      startedAt: DateTime(2026, 8, 22, 9, 0),
+      duration: const Duration(minutes: 5),
+      focusSummary: 'A-Z',
+      wpm: 90,
+      recognitionTimeMs: 500,
+      extraGapMs: 0,
+      voiceEnabled: false,
+      vrScorePercent: 87,
+    );
+    await tester.pumpWidget(
+      wrap(TrainingLogScreen(store: _FakeTrainingLogStore([session]))),
+    );
+    await tester.pump();
+
+    expect(find.text('87% Right'), findsOneWidget);
+    expect(find.text('Off'), findsOneWidget);
   });
 }

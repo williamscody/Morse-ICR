@@ -212,6 +212,11 @@ class _TrainingScreenState extends State<TrainingScreen>
   int _sessionStartWpm = 0;
   int _sessionStartRecognitionTimeMs = 0;
   int _sessionStartExtraGapMs = 0;
+  // The "Voice" setting (TTS voice output, section 35 -- distinct from
+  // Speech Recognition) in effect the moment the session started, same
+  // reasoning as the three above: Settings stays reachable mid-session,
+  // so [_voiceEnabled] can change before Stop.
+  bool _sessionStartVoiceEnabled = true;
   bool _voiceEnabled = true;
   bool _voicePreparing = false;
   // Populated once [TtsAnswerSpeaker.voiceSelectionReady] resolves,
@@ -702,6 +707,7 @@ class _TrainingScreenState extends State<TrainingScreen>
     _sessionStartWpm = _wpm;
     _sessionStartRecognitionTimeMs = _recognitionTimeMs;
     _sessionStartExtraGapMs = _extraGapMs;
+    _sessionStartVoiceEnabled = _voiceEnabled;
     _recognitionActiveThisSession = _recognitionEnabled;
     _sessionHits.clear();
     _sessionMisses.clear();
@@ -983,6 +989,15 @@ class _TrainingScreenState extends State<TrainingScreen>
     final startedAt = _sessionStartedAt;
     if (startedAt == null) return;
     _sessionStartedAt = null;
+    int? vrScorePercent;
+    if (_recognitionActiveThisSession) {
+      final hits = _sessionHits.values.fold<int>(0, (sum, v) => sum + v);
+      final misses = _sessionMisses.values.fold<int>(0, (sum, v) => sum + v);
+      final attempts = hits + misses;
+      if (attempts > 0) {
+        vrScorePercent = ((hits / attempts) * 100).round();
+      }
+    }
     final record = TrainingSessionRecord(
       id: startedAt.microsecondsSinceEpoch.toString(),
       startedAt: startedAt,
@@ -991,6 +1006,8 @@ class _TrainingScreenState extends State<TrainingScreen>
       wpm: _sessionStartWpm,
       recognitionTimeMs: _sessionStartRecognitionTimeMs,
       extraGapMs: _sessionStartExtraGapMs,
+      voiceEnabled: _sessionStartVoiceEnabled,
+      vrScorePercent: vrScorePercent,
     );
     try {
       final existing = await _trainingLogStore.load();

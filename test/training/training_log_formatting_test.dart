@@ -51,7 +51,8 @@ void main() {
     test('produces a header row when there are no records', () {
       expect(
         buildTrainingLogCsv([]),
-        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes\n',
+        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),SR Score,'
+        'Notes\n',
       );
     });
 
@@ -71,8 +72,32 @@ void main() {
 
       expect(
         csv,
-        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes\n'
-        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,went well\n',
+        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),SR Score,'
+        'Notes\n'
+        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,,went well\n',
+      );
+    });
+
+    test('includes the VR score when voice recognition was active', () {
+      final csv = buildTrainingLogCsv([
+        TrainingSessionRecord(
+          id: '1',
+          startedAt: DateTime(2026, 3, 5, 9, 0),
+          duration: const Duration(minutes: 5),
+          focusSummary: 'A-Z',
+          wpm: 90,
+          recognitionTimeMs: 500,
+          extraGapMs: 100,
+          notes: 'went well',
+          vrScorePercent: 87,
+        ),
+      ]);
+
+      expect(
+        csv,
+        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),SR Score,'
+        'Notes\n'
+        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,87%,went well\n',
       );
     });
 
@@ -92,8 +117,9 @@ void main() {
 
       expect(
         csv,
-        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes\n'
-        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,'
+        'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),SR Score,'
+        'Notes\n'
+        '03/05/26,09:00 AM,00:05:00,A-Z,90,500,100,,'
         '"K, R ""hard"" today\nretry tomorrow"\n',
       );
     });

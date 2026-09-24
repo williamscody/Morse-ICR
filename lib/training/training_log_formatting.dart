@@ -49,8 +49,9 @@ String buildTrainingLogCsv(List<TrainingSessionRecord> records) {
     return '"${field.replaceAll('"', '""')}"';
   }
 
-  final buffer = StringBuffer()
-    ..writeln('Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),Notes');
+  final buffer = StringBuffer()..writeln(
+    'Date,Time,Duration,Focus,WPM,Recognition (ms),Gap (ms),SR Score,Notes',
+  );
   for (final record in records) {
     buffer.writeln(
       [
@@ -61,6 +62,9 @@ String buildTrainingLogCsv(List<TrainingSessionRecord> records) {
         record.wpm.toString(),
         record.recognitionTimeMs.toString(),
         record.extraGapMs.toString(),
+        // A score can only exist when voice recognition was on, so a
+        // separate on/off column would be redundant (Bill, 2026-09-23).
+        record.vrScorePercent != null ? '${record.vrScorePercent}%' : '',
         escape(record.notes),
       ].join(','),
     );

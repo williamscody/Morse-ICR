@@ -1,4 +1,4 @@
-import 'dart:io' show File;
+import 'dart:io' show File, Platform;
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -292,12 +292,24 @@ class _SessionRowState extends State<_SessionRow> {
           ],
         ),
         const SizedBox(height: 8),
-        // Its own row, full-width -- a long character-set focus summary
-        // squeezed into the Date/Time/Duration row above pushed those
-        // cells together until they visually collided (Bill, on-device,
-        // after seeing several problem characters selected at once).
-        _Cell('Focus', record.focusSummary),
-        const SizedBox(height: 8),
+        // Android keeps Focus in its own row rather than iOS's merged
+        // settings row -- a long character-set focus summary squeezed
+        // into the Date/Time/Duration row above pushed those cells
+        // together until they visually collided (Bill, on-device, after
+        // seeing several problem characters selected at once). Voice Off
+        // sits to its right here (Bill, 2026-09-23) rather than in the
+        // last row, freeing that row for SR Score alone.
+        if (!Platform.isIOS) ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _Cell('Focus', record.focusSummary),
+              if (!record.voiceEnabled) _Cell('Voice', 'Off'),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
         // A second row for the settings the session started at (too
         // crowded to fit alongside Date/Time/Duration/Focus in one row --
         // Bill, on-device, after seeing the first cut).
@@ -310,6 +322,37 @@ class _SessionRowState extends State<_SessionRow> {
             _Cell('Gap', '${record.extraGapMs} ms'),
           ],
         ),
+        // iOS: a last row with Focus, then SR Score and/or a "Voice Off"
+        // notation (Bill, 2026-09-23) -- SR Score reflects Speech
+        // Recognition (listening for a spoken answer), Voice Off reflects
+        // the separate "Voice" setting (TTS speaking the answer back),
+        // so both can appear together: recognition can be on and scored
+        // in the same session that TTS is off. Focus always appears
+        // here, unlike the other two, so this row is unconditional --
+        // unlike Android, which puts Voice Off next to Focus above and
+        // so only needs this row, conditionally, for SR Score.
+        if (Platform.isIOS) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _Cell('Focus', record.focusSummary),
+              if (record.vrScorePercent != null)
+                _Cell('SR Score', '${record.vrScorePercent}% Right'),
+              if (!record.voiceEnabled) _Cell('Voice', 'Off'),
+            ],
+          ),
+        ] else if (record.vrScorePercent != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _Cell('SR Score', '${record.vrScorePercent}% Right'),
+            ],
+          ),
+        ],
         const SizedBox(height: 8),
         TextField(
           controller: _notesController,
