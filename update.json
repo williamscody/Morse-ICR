@@ -1,6 +1,6 @@
 {
-  "latestVersion": "1.0.3-test",
-  "latestBuildNumber": 2,
+  "latestVersion": "1.0.2",
+  "latestBuildNumber": 1,
   "downloadUrl": "https://github.com/williamscody/Morse-ICR/releases/latest/download/morse-icr.apk",
-  "releaseNotes": "Temporary test of the update-check flow."
+  "releaseNotes": "Add SR Score, Missing Fast training, and Help search."
 }
