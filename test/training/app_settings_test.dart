@@ -11,6 +11,8 @@ void main() {
     expect(settings.morseVolumePercent, 60);
     expect(settings.voiceVolumePercent, 100);
     expect(settings.randomCharacterOrder, isTrue);
+    expect(settings.lastUpdateCheckEpochMs, 0);
+    expect(settings.dismissedUpdateBuildNumber, 0);
   });
 
   test('toJson/fromJson round-trips every field', () {
@@ -21,6 +23,8 @@ void main() {
       morseVolumePercent: 40,
       voiceVolumePercent: 85,
       randomCharacterOrder: false,
+      lastUpdateCheckEpochMs: 1234567890,
+      dismissedUpdateBuildNumber: 3,
     );
 
     final roundTripped = AppSettings.fromJson(settings.toJson());
@@ -30,9 +34,14 @@ void main() {
     expect(roundTripped.morsePitchHz, settings.morsePitchHz);
     expect(roundTripped.morseVolumePercent, settings.morseVolumePercent);
     expect(roundTripped.voiceVolumePercent, settings.voiceVolumePercent);
+    expect(roundTripped.randomCharacterOrder, settings.randomCharacterOrder);
     expect(
-      roundTripped.randomCharacterOrder,
-      settings.randomCharacterOrder,
+      roundTripped.lastUpdateCheckEpochMs,
+      settings.lastUpdateCheckEpochMs,
+    );
+    expect(
+      roundTripped.dismissedUpdateBuildNumber,
+      settings.dismissedUpdateBuildNumber,
     );
   });
 

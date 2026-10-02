@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../audio/audio_session_setup.dart';
 import '../audio/keep_alive_audio_loop.dart';
@@ -33,6 +34,8 @@ import '../training/problem_character_store.dart';
 import '../training/training_engine.dart';
 import '../training/training_log_store.dart';
 import '../training/training_session_record.dart';
+import '../update/update_checker.dart';
+import '../update/update_info.dart';
 import 'countdown_timer_settings.dart';
 import 'enrollment_screen.dart';
 import 'help_screen.dart';
@@ -85,6 +88,7 @@ class TrainingScreen extends StatefulWidget {
     CountdownTimerStore? countdownTimerStore,
     TrainingLogStore? trainingLogStore,
     AppSettingsStore? appSettingsStore,
+    UpdateChecker? updateChecker,
     Future<bool> Function() headphonesConnectedCheck = hasNonSpeakerAudioOutput,
     Future<void> Function() reconfigureAudioSessionOnStart =
         configureAudioSession,
@@ -99,6 +103,7 @@ class TrainingScreen extends StatefulWidget {
        _injectedCountdownTimerStore = countdownTimerStore,
        _injectedTrainingLogStore = trainingLogStore,
        _injectedAppSettingsStore = appSettingsStore,
+       _injectedUpdateChecker = updateChecker,
        _headphonesConnectedCheck = headphonesConnectedCheck,
        _reconfigureAudioSessionOnStart = reconfigureAudioSessionOnStart,
        _activateAudioSessionOnStart = activateAudioSessionOnStart,
@@ -112,6 +117,7 @@ class TrainingScreen extends StatefulWidget {
   final CountdownTimerStore? _injectedCountdownTimerStore;
   final TrainingLogStore? _injectedTrainingLogStore;
   final AppSettingsStore? _injectedAppSettingsStore;
+  final UpdateChecker? _injectedUpdateChecker;
   final Future<bool> Function() _headphonesConnectedCheck;
   final Future<void> Function() _reconfigureAudioSessionOnStart;
   final Future<void> Function() _activateAudioSessionOnStart;
@@ -251,6 +257,12 @@ class _TrainingScreenState extends State<TrainingScreen>
   late final CountdownTimerStore _countdownTimerStore;
   late final TrainingLogStore _trainingLogStore;
   late final AppSettingsStore _appSettingsStore;
+  late final UpdateChecker _updateChecker;
+  // Set once [_maybeCheckForUpdate] finds something newer than this
+  // build that hasn't already been dismissed (see [AppSettings.
+  // dismissedUpdateBuildNumber]) -- shows the MaterialBanner built in
+  // [build] below.
+  UpdateInfo? _availableUpdate;
 
   @override
   void initState() {
@@ -379,6 +391,7 @@ class _TrainingScreenState extends State<TrainingScreen>
         widget._injectedTrainingLogStore ?? FileTrainingLogStore();
     _appSettingsStore =
         widget._injectedAppSettingsStore ?? FileAppSettingsStore();
+    _updateChecker = widget._injectedUpdateChecker ?? UpdateChecker();
     // Applied once loaded, not just stored -- [_answerSpeaker] and
     // [_turnAudioEngine] were already constructed above (with default
     // settings, since a persisted value can't be awaited synchronously
@@ -415,6 +428,7 @@ class _TrainingScreenState extends State<TrainingScreen>
         }
       });
       _applyAppSettings(settings);
+      unawaited(_maybeCheckForUpdate(settings));
     });
     final answerSpeaker = _answerSpeaker;
     if (answerSpeaker is TtsAnswerSpeaker) {
@@ -1338,6 +1352,44 @@ class _TrainingScreenState extends State<TrainingScreen>
     unawaited(_appSettingsStore.save(_appSettings));
   }
 
+  // This app isn't distributed through Google Play (Bill, 2026-10-01 --
+  // gave up on its submission process), so there's no store to notify a
+  // learner of a new release. Throttled to at most once/day via
+  // [AppSettings.lastUpdateCheckEpochMs], which survives a force quit;
+  // the timestamp is stamped on every attempt (not just a successful
+  // one) so a brief outage on Bill's website can't turn into repeated
+  // checks on every subsequent cold launch within the same day.
+  Future<void> _maybeCheckForUpdate(AppSettings settings) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    if (now - settings.lastUpdateCheckEpochMs < oneDayMs) return;
+    final info = await _updateChecker.checkForUpdate();
+    if (!mounted) return;
+    _updateAppSettings(settings.copyWith(lastUpdateCheckEpochMs: now));
+    if (info != null &&
+        info.latestBuildNumber > settings.dismissedUpdateBuildNumber) {
+      setState(() => _availableUpdate = info);
+    }
+  }
+
+  void _dismissAvailableUpdate() {
+    final info = _availableUpdate;
+    if (info == null) return;
+    setState(() => _availableUpdate = null);
+    _updateAppSettings(
+      _appSettings.copyWith(dismissedUpdateBuildNumber: info.latestBuildNumber),
+    );
+  }
+
+  void _openAvailableUpdate() {
+    final info = _availableUpdate;
+    if (info == null) return;
+    launchUrl(
+      Uri.parse(info.downloadUrl),
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
   void _openHelp() {
     Navigator.of(
       context,
@@ -1430,6 +1482,14 @@ class _TrainingScreenState extends State<TrainingScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_availableUpdate != null) ...[
+                    _UpdateAvailableBanner(
+                      info: _availableUpdate!,
+                      onView: _openAvailableUpdate,
+                      onDismiss: _dismissAvailableUpdate,
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   _SectionCard(
                     title: 'Training Settings',
                     child: Column(
@@ -1816,6 +1876,56 @@ class _SectionCard extends StatelessWidget {
               const SizedBox(height: 8),
             ],
             child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown at the top of the main screen when [UpdateChecker] has found a
+/// newer build than this one -- Dismiss hides it for this specific
+/// release only (a later release still prompts), View opens the
+/// website's download link in the device's own browser, which handles
+/// the actual APK download/install; this app never installs updates
+/// itself.
+class _UpdateAvailableBanner extends StatelessWidget {
+  const _UpdateAvailableBanner({
+    required this.info,
+    required this.onView,
+    required this.onDismiss,
+  });
+
+  final UpdateInfo info;
+  final VoidCallback onView;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: colorScheme.tertiaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        child: Row(
+          children: [
+            Icon(Icons.system_update, color: colorScheme.onTertiaryContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Version ${info.latestVersion} is available',
+                style: TextStyle(color: colorScheme.onTertiaryContainer),
+              ),
+            ),
+            TextButton(onPressed: onView, child: const Text('View')),
+            IconButton(
+              icon: Icon(Icons.close, color: colorScheme.onTertiaryContainer),
+              tooltip: 'Dismiss',
+              onPressed: onDismiss,
+            ),
           ],
         ),
       ),

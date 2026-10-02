@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_version.dart';
+import '../update/update_checker.dart';
 
 /// One entry in the Help screen's table of contents and the matching
 /// body section below it -- [icon]/[color] are shared by both, per
@@ -310,7 +311,11 @@ final List<_HelpSection> _helpSections = [
 /// 2026-08-30). Reached from the main screen's "circled i" icon, just
 /// left of Settings.
 class HelpScreen extends StatefulWidget {
-  const HelpScreen({super.key, this.initialSectionTitle});
+  const HelpScreen({
+    super.key,
+    this.initialSectionTitle,
+    UpdateChecker? updateChecker,
+  }) : _injectedUpdateChecker = updateChecker;
 
   /// Scrolls straight to the section whose [_HelpSection.title] matches
   /// this exactly, once the screen opens -- used by external callers
@@ -320,6 +325,11 @@ class HelpScreen extends StatefulWidget {
   /// Null (the default, matching every other caller -- the main Help
   /// button) just opens at the top as before.
   final String? initialSectionTitle;
+
+  /// Lets tests substitute a fake rather than exercising a real network
+  /// call; production code always omits this and gets a real
+  /// [UpdateChecker].
+  final UpdateChecker? _injectedUpdateChecker;
 
   @override
   State<HelpScreen> createState() => _HelpScreenState();
@@ -336,10 +346,12 @@ class _HelpScreenState extends State<HelpScreen> {
   // once everything irrelevant to the query is out of the way.
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+  late final UpdateChecker _updateChecker;
 
   @override
   void initState() {
     super.initState();
+    _updateChecker = widget._injectedUpdateChecker ?? UpdateChecker();
     _searchController.addListener(() {
       setState(() => _query = _searchController.text.trim().toLowerCase());
     });
@@ -439,9 +451,7 @@ class _HelpScreenState extends State<HelpScreen> {
                               ),
                         isDense: true,
                         border: const OutlineInputBorder(
-                          borderRadius: BorderRadius.all(
-                            Radius.circular(12),
-                          ),
+                          borderRadius: BorderRadius.all(Radius.circular(12)),
                         ),
                       ),
                     ),
@@ -485,6 +495,7 @@ class _HelpScreenState extends State<HelpScreen> {
                         ),
                       ),
                     ),
+                    _CheckForUpdatesButton(updateChecker: _updateChecker),
                     const _CreatedByLink(),
                     const _CoffeeLink(),
                   ],
@@ -606,6 +617,83 @@ class _HelpSectionLink extends StatelessWidget {
             color: Theme.of(context).colorScheme.primary,
             decoration: TextDecoration.underline,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A manual, unthrottled counterpart to [TrainingScreen]'s automatic
+/// once-a-day update check -- this app isn't on Google Play, so this
+/// (and that automatic check) are the only ways a learner finds out a
+/// newer build exists.
+class _CheckForUpdatesButton extends StatefulWidget {
+  const _CheckForUpdatesButton({required this.updateChecker});
+
+  final UpdateChecker updateChecker;
+
+  @override
+  State<_CheckForUpdatesButton> createState() => _CheckForUpdatesButtonState();
+}
+
+class _CheckForUpdatesButtonState extends State<_CheckForUpdatesButton> {
+  bool _checking = false;
+
+  Future<void> _check() async {
+    setState(() => _checking = true);
+    try {
+      final info = await widget.updateChecker.fetchLatest();
+      if (!mounted) return;
+      final upToDate =
+          info.latestBuildNumber <= widget.updateChecker.currentBuildNumber;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          upToDate
+              ? const SnackBar(content: Text("You're up to date."))
+              : SnackBar(
+                  content: Text('Version ${info.latestVersion} is available'),
+                  duration: const Duration(seconds: 8),
+                  action: SnackBarAction(
+                    label: 'View',
+                    onPressed: () => launchUrl(
+                      Uri.parse(info.downloadUrl),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                  ),
+                ),
+        );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Couldn't check for updates -- check your connection.",
+            ),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Center(
+        child: TextButton.icon(
+          onPressed: _checking ? null : _check,
+          icon: _checking
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.system_update),
+          label: Text(_checking ? 'Checking…' : 'Check for Updates'),
         ),
       ),
     );

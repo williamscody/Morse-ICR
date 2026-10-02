@@ -31,6 +31,8 @@ class AppSettings {
     this.recognitionEnabled = true,
     this.selectedVoiceName = '',
     this.selectedVoiceLocale = '',
+    this.lastUpdateCheckEpochMs = 0,
+    this.dismissedUpdateBuildNumber = 0,
   });
 
   final bool speakPeriodAsDot;
@@ -48,6 +50,18 @@ class AppSettings {
   /// having picked something else.
   final String selectedVoiceName;
   final String selectedVoiceLocale;
+
+  /// `DateTime.now().millisecondsSinceEpoch` as of the last time
+  /// [UpdateChecker] actually hit the network (not every app launch --
+  /// only once the throttle interval has elapsed) -- lets the throttle
+  /// survive a force quit instead of re-checking every cold launch.
+  final int lastUpdateCheckEpochMs;
+
+  /// The [appBuildNumber] of the newest update a learner has dismissed
+  /// the banner for, or 0 if none has ever been dismissed. Suppresses the
+  /// banner for that specific build without suppressing a later, newer
+  /// one.
+  final int dismissedUpdateBuildNumber;
 
   /// When false, characters play in the active set's own order instead
   /// of a random draw -- a diagnostic toggle (2026-08-23) for getting a
@@ -82,6 +96,8 @@ class AppSettings {
     bool? recognitionEnabled,
     String? selectedVoiceName,
     String? selectedVoiceLocale,
+    int? lastUpdateCheckEpochMs,
+    int? dismissedUpdateBuildNumber,
   }) => AppSettings(
     speakPeriodAsDot: speakPeriodAsDot ?? this.speakPeriodAsDot,
     speakSlashAsStroke: speakSlashAsStroke ?? this.speakSlashAsStroke,
@@ -98,6 +114,10 @@ class AppSettings {
     recognitionEnabled: recognitionEnabled ?? this.recognitionEnabled,
     selectedVoiceName: selectedVoiceName ?? this.selectedVoiceName,
     selectedVoiceLocale: selectedVoiceLocale ?? this.selectedVoiceLocale,
+    lastUpdateCheckEpochMs:
+        lastUpdateCheckEpochMs ?? this.lastUpdateCheckEpochMs,
+    dismissedUpdateBuildNumber:
+        dismissedUpdateBuildNumber ?? this.dismissedUpdateBuildNumber,
   );
 
   Map<String, Object?> toJson() => {
@@ -115,6 +135,8 @@ class AppSettings {
     'recognitionEnabled': recognitionEnabled,
     'selectedVoiceName': selectedVoiceName,
     'selectedVoiceLocale': selectedVoiceLocale,
+    'lastUpdateCheckEpochMs': lastUpdateCheckEpochMs,
+    'dismissedUpdateBuildNumber': dismissedUpdateBuildNumber,
   };
 
   factory AppSettings.fromJson(Map<String, Object?> json) {
@@ -148,6 +170,12 @@ class AppSettings {
       selectedVoiceLocale:
           json['selectedVoiceLocale'] as String? ??
           defaults.selectedVoiceLocale,
+      lastUpdateCheckEpochMs:
+          json['lastUpdateCheckEpochMs'] as int? ??
+          defaults.lastUpdateCheckEpochMs,
+      dismissedUpdateBuildNumber:
+          json['dismissedUpdateBuildNumber'] as int? ??
+          defaults.dismissedUpdateBuildNumber,
     );
   }
 }
