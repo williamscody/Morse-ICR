@@ -496,6 +496,7 @@ class _HelpScreenState extends State<HelpScreen> {
                       ),
                     ),
                     _CheckForUpdatesButton(updateChecker: _updateChecker),
+                    const _ObtainiumNote(),
                     const _CreatedByLink(),
                     const _CoffeeLink(),
                   ],
@@ -694,6 +695,66 @@ class _CheckForUpdatesButtonState extends State<_CheckForUpdatesButton> {
                 )
               : const Icon(Icons.system_update),
           label: Text(_checking ? 'Checking…' : 'Check for Updates'),
+        ),
+      ),
+    );
+  }
+}
+
+/// Points power users at Obtainium (https://github.com/ImranR98/
+/// Obtainium) -- a third-party installer that watches a GitHub repo's
+/// Releases and both installs and auto-updates from there, skipping
+/// Chrome's one-off "file might be harmful" download warning that a
+/// plain browser download of an unreleased-through-Play APK always
+/// triggers. Nothing in this app or its GitHub repo needed to change to
+/// support this -- Obtainium just needs a public repo with one
+/// unambiguous .apk per release, which the repo already has for
+/// [UpdateChecker]'s own manifest-based check.
+class _ObtainiumNote extends StatelessWidget {
+  const _ObtainiumNote();
+
+  static final Uri _repoUrl = Uri.parse(
+    'https://github.com/williamscody/Morse-ICR',
+  );
+  static final Uri _obtainiumUrl = Uri.parse(
+    'https://github.com/ImranR98/Obtainium',
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final bodyStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    final linkStyle = bodyStyle?.copyWith(
+      color: Theme.of(context).colorScheme.primary,
+      decoration: TextDecoration.underline,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Center(
+        child: Column(
+          children: [
+            Text(
+              'Want installs and updates to happen automatically?',
+              textAlign: TextAlign.center,
+              style: bodyStyle,
+            ),
+            InkWell(
+              onTap: () => launchUrl(
+                _obtainiumUrl,
+                mode: LaunchMode.externalApplication,
+              ),
+              child: Text('Use Obtainium', style: linkStyle),
+            ),
+            InkWell(
+              onTap: () =>
+                  launchUrl(_repoUrl, mode: LaunchMode.externalApplication),
+              child: Text(
+                'github.com/williamscody/Morse-ICR',
+                style: linkStyle,
+              ),
+            ),
+          ],
         ),
       ),
     );
