@@ -4,7 +4,7 @@
 /// only when explicitly asked to (Bill, 2026-08-31); keep it in step
 /// with `pubspec.yaml`'s own `version:` field when you do, so the two
 /// don't drift apart.
-const String appVersion = '1.0.2';
+const String appVersion = '1.0.3';
 
 /// This build's number -- the `+N` in `pubspec.yaml`'s `version:` field --
 /// compared against the website's manifest by [UpdateChecker] to decide
@@ -12,4 +12,4 @@ const String appVersion = '1.0.2';
 /// version string, so that comparison is a single `>` rather than parsing
 /// and comparing dotted version strings. Bumped on the same schedule as
 /// [appVersion].
-const int appBuildNumber = 1;
+const int appBuildNumber = 2;

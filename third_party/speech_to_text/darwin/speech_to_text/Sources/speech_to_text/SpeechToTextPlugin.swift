@@ -108,6 +108,16 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
   private let speechBufferSize: AVAudioFrameCount = 1024
   private static var subsystem = Bundle.main.bundleIdentifier!
   private let pluginLog = OSLog(subsystem: "com.csdcorp.speechToText", category: "plugin")
+  // MORSE_ICR fork: every method call and every delegate callback that touches
+  // audioEngine/inputNode/currentTask/listening state runs on this one serial
+  // queue. Upstream dispatched each call in its own unstructured `Task {}`
+  // (the global concurrent executor), so a listen() could run at the same time
+  // as a cancel()/stop() or a recognizer callback's stopCurrentListen(), with
+  // one thread replacing audioEngine while another was still using the old one.
+  // App Store crash logs for 1.0.2 (all inside listenForSpeech/initAudioEngine:
+  // unrecognized selector on a freed engine, SIGSEGV in AVAudioEngine.prepare,
+  // recursive_mutex system_error) are all that race.
+  private let pluginQueue = DispatchQueue(label: "com.csdcorp.speechToText.plugin")
 
   public static func register(with registrar: FlutterPluginRegistrar) {
 
@@ -135,12 +145,8 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
     case SwiftSpeechToTextMethods.has_permission.rawValue:
       hasPermission(result)
     case SwiftSpeechToTextMethods.initialize.rawValue:
-        if #available(iOS 13.0, *) {
-            Task {
-                initialize(result)
-            }
-        } else {
-            initialize(result)
+        pluginQueue.async {
+            self.initialize(result)
         }
     case SwiftSpeechToTextMethods.listen.rawValue:
       guard let argsArr = call.arguments as? [String: AnyObject],
@@ -161,10 +167,7 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
         }
         return
       }
-      var localeStr: String? = nil
-      if let localeParam = argsArr["localeId"] as? String {
-        localeStr = localeParam
-      }
+      let localeStr = argsArr["localeId"] as? String
       guard let listenMode = ListenMode(rawValue: listenModeIndex) else {
         DispatchQueue.main.async {
           result(
@@ -175,49 +178,23 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
         }
         return
       }
-        if #available(iOS 13.0, *) {
-            let capturedLocaleStr = localeStr
-            let capturedPartialResults = partialResults
-            let capturedOnDevice = onDevice
-            let capturedListenMode = listenMode
-            let capturedSampleRate = sampleRate
-            let capturedAutoPunctuation = autoPunctuation
-            let capturedEnableHaptics = enableHaptics
-            Task {
-                listenForSpeech(
-                    result, localeStr: capturedLocaleStr, partialResults: capturedPartialResults, onDevice: capturedOnDevice,
-                    listenMode: capturedListenMode, sampleRate: capturedSampleRate, autoPunctuation: capturedAutoPunctuation,
-                    enableHaptics: capturedEnableHaptics)
-            }
-        } else {
-            listenForSpeech(
+        pluginQueue.async {
+            self.listenForSpeech(
                 result, localeStr: localeStr, partialResults: partialResults, onDevice: onDevice,
                 listenMode: listenMode, sampleRate: sampleRate, autoPunctuation: autoPunctuation,
                 enableHaptics: enableHaptics)
         }
     case SwiftSpeechToTextMethods.stop.rawValue:
-        if #available(iOS 13.0, *) {
-            Task {
-                stopSpeech(result)
-            }
-        } else {
-            stopSpeech(result)
+        pluginQueue.async {
+            self.stopSpeech(result)
         }
     case SwiftSpeechToTextMethods.cancel.rawValue:
-        if #available(iOS 13.0, *) {
-            Task {
-                cancelSpeech(result)
-            }
-        } else {
-            cancelSpeech(result)
+        pluginQueue.async {
+            self.cancelSpeech(result)
         }
     case SwiftSpeechToTextMethods.locales.rawValue:
-        if #available(iOS 13.0, *) {
-            Task {
-                locales(result)
-            }
-        } else {
-            locales(result)
+        pluginQueue.async {
+            self.locales(result)
         }
     default:
       os_log("Unrecognized method: %{PUBLIC}@", log: pluginLog, type: .error, call.method)
@@ -254,7 +231,9 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
 
             self.audioSession.requestRecordPermission({ (granted: Bool) -> Void in
               if granted {
-                self.setupSpeechRecognition(result)
+                self.pluginQueue.async {
+                  self.setupSpeechRecognition(result)
+                }
               } else {
                 self.sendBoolResult(false, result)
                 os_log("User denied permission", log: self.pluginLog, type: .info)
@@ -264,7 +243,9 @@ public class SpeechToTextPlugin: NSObject, FlutterPlugin {
           #else
             self.requestMacOSMicrophonePermission { success in
               if success {
-                self.setupSpeechRecognition(result)
+                self.pluginQueue.async {
+                  self.setupSpeechRecognition(result)
+                }
               } else {
                 self.sendBoolResult(false, result)
                 os_log("User denied permission", log: self.pluginLog, type: .info)
@@ -806,14 +787,18 @@ extension SpeechToTextPlugin: SFSpeechRecognitionTaskDelegate {
         }
       }
     }
-    if !stopping {
-      if let sound = successfully ? successSound : cancelSound {
-        onPlayEnd = { () -> Void in
+    // Recognizer callbacks arrive on Speech's own thread; hop to pluginQueue
+    // before touching engine/session state (see pluginQueue).
+    pluginQueue.async {
+      if !self.stopping {
+        if let sound = successfully ? self.successSound : self.cancelSound {
+          self.onPlayEnd = { () -> Void in
+            self.stopCurrentListen()
+          }
+          sound.play()
+        } else {
           self.stopCurrentListen()
         }
-        sound.play()
-      } else {
-        stopCurrentListen()
       }
     }
   }
@@ -823,7 +808,9 @@ extension SpeechToTextPlugin: SFSpeechRecognitionTaskDelegate {
   ) {
     os_log("HypothesizeTranscription", log: pluginLog, type: .debug)
     reportError(source: "HypothesizeTranscription", error: task.error)
-      handleResult([transcription], isFinal: false, maybeFinal: false)
+    pluginQueue.async {
+      self.handleResult([transcription], isFinal: false, maybeFinal: false)
+    }
   }
 
   public func speechRecognitionTask(
@@ -839,7 +826,9 @@ extension SpeechToTextPlugin: SFSpeechRecognitionTaskDelegate {
           pseudoFinal = recognitionResult.speechRecognitionMetadata != nil
       }
     let isFinal = recognitionResult.isFinal
-      handleResult(recognitionResult.transcriptions, isFinal: isFinal, maybeFinal: pseudoFinal )
+    pluginQueue.async {
+      self.handleResult(recognitionResult.transcriptions, isFinal: isFinal, maybeFinal: pseudoFinal)
+    }
   }
 
   private func reportError(source: String, error: Error?) {
@@ -858,8 +847,12 @@ extension SpeechToTextPlugin: AVAudioPlayerDelegate {
     _ player: AVAudioPlayer,
     successfully flag: Bool
   ) {
-    if let playEnd = self.onPlayEnd {
-      playEnd()
+    // Delivered on the main thread; onPlayEnd tears down/starts audio state,
+    // so run it on pluginQueue like everything else that does.
+    pluginQueue.async {
+      if let playEnd = self.onPlayEnd {
+        playEnd()
+      }
     }
   }
 }
